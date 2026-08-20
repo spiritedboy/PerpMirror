@@ -224,4 +224,4 @@ python -m perpmirror
 
 - [Binance USDⓈ-M Futures API](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/Introduction)
 - [OKX API V5](https://www.okx.com/docs-v5/en/)
-- [飞书自定义机器人发送消息卡片](https://open.feishu.cn/document/common-capabilities/message-card/getting-started/send-message-cards-with-a-custom-bot?lang=zh-CN)
+- [飞书自定义机器人发送飞书卡片（Card JSON 2.0）](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/quick-start/send-message-cards-with-custom-bot)

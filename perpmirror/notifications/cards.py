@@ -80,9 +80,18 @@ class FeishuCardBuilder:
             fields.append(("Error", SecretRedactionFilter.redact(event.error_message)))
         content = "\n".join(f"**{name}**\n{value}" for name, value in fields)
         return {
-            "config": {"wide_screen_mode": True},
-            "header": {"template": template, "title": {"tag": "plain_text", "content": title}},
-            "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": content}}],
+            "schema": "2.0",
+            "config": {"update_multi": True},
+            "header": {
+                "template": template,
+                "title": {"tag": "plain_text", "content": title},
+                "padding": "12px 12px 12px 12px",
+            },
+            "body": {
+                "direction": "vertical",
+                "padding": "12px 12px 12px 12px",
+                "elements": [{"tag": "markdown", "content": content}],
+            },
         }
 
     @staticmethod
@@ -110,7 +119,16 @@ class FeishuCardBuilder:
             f"**Full Reconcile**\n每 {reconcile_interval} 秒"
         )
         return {
-            "config": {"wide_screen_mode": True},
-            "header": {"template": "blue", "title": {"tag": "plain_text", "content": "🚀 PerpMirror 已启动"}},
-            "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": content}}],
+            "schema": "2.0",
+            "config": {"update_multi": True},
+            "header": {
+                "template": "blue",
+                "title": {"tag": "plain_text", "content": "🚀 PerpMirror 已启动"},
+                "padding": "12px 12px 12px 12px",
+            },
+            "body": {
+                "direction": "vertical",
+                "padding": "12px 12px 12px 12px",
+                "elements": [{"tag": "markdown", "content": content}],
+            },
         }

@@ -43,7 +43,8 @@ def test_all_trade_and_failure_cards_are_valid_json() -> None:
     ):
         card = builder.trade(event(action))
         encoded = json.dumps(card, ensure_ascii=False)
-        assert "header" in card and "elements" in card
+        assert card["schema"] == "2.0"
+        assert "header" in card and "elements" in card["body"]
         assert "BTC-USDT-PERP" in encoded
 
 
@@ -65,4 +66,5 @@ def test_startup_card_marks_dry_run() -> None:
         followers=[("f1", "okx", "fixed", Decimal("2000"), 0)],
         reconcile_interval=Decimal("10"),
     )
+    assert card["schema"] == "2.0"
     assert "DRY RUN" in json.dumps(card, ensure_ascii=False)
