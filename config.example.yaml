@@ -1,0 +1,63 @@
+app:
+  dry_run: true
+  sync_on_start: true
+  full_reconcile_interval_seconds: 10
+  event_debounce_seconds: 0.3
+  ws_reconnect_max_seconds: 30
+  heartbeat_interval_seconds: 300
+  max_concurrent_orders: 5
+  max_reconcile_retries: 3
+  retry_base_delay_seconds: 0.5
+  position_drift_threshold_percent: 1.0
+  position_drift_min_usdt: 5
+
+leader:
+  id: leader01
+  exchange: binance
+  api_key_env: LEADER_API_KEY
+  secret_key_env: LEADER_SECRET_KEY
+
+followers:
+  - id: binance_fixed
+    exchange: binance
+    api_key_env: FOLLOWER1_API_KEY
+    secret_key_env: FOLLOWER1_SECRET_KEY
+    copy_mode: fixed
+    fixed_margin_usdt: 20
+    copy_leverage: true
+    fixed_leverage: 5
+    max_leverage: 20
+    copy_margin_mode: true
+    margin_mode: cross
+
+  - id: okx_ratio
+    exchange: okx
+    api_key_env: FOLLOWER2_API_KEY
+    secret_key_env: FOLLOWER2_SECRET_KEY
+    passphrase_env: FOLLOWER2_PASSPHRASE
+    copy_mode: ratio
+    copy_ratio: 1.0
+    copy_leverage: true
+    fixed_leverage: 5
+    max_leverage: 20
+    copy_margin_mode: true
+    margin_mode: cross
+
+risk:
+  allow_short: true
+  max_leverage: 20
+  max_single_symbol_notional_usdt: 2000
+  max_total_notional_usdt: 5000
+  max_order_notional_usdt: 1000
+  max_open_symbols: 10
+  min_order_notional_usdt: 5
+  symbol_allowlist: []
+  symbol_blocklist: []
+  kill_switch: false
+  kill_switch_close_positions: false
+
+feishu:
+  enabled: false
+  webhook_env: FEISHU_WEBHOOK
+  secret_env: FEISHU_SECRET
+  max_retries: 3

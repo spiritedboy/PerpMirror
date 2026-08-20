@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perp-mirror"
+version = "0.1.0"
+description = "Target-position reconciler for Binance and OKX USDT perpetual followers"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx>=0.28,<1",
+  "PyYAML>=6.0,<7",
+  "python-dotenv>=1.0,<2",
+  "websockets>=15,<16",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "mypy>=1.15,<2",
+  "ruff>=0.11,<1",
+  "types-PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+perpmirror = "perpmirror.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["perpmirror*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+no_implicit_optional = true
