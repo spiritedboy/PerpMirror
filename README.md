@@ -95,6 +95,7 @@ cp .env.example .env
 ```env
 LEADER_API_KEY=
 LEADER_SECRET_KEY=
+LEADER_PASSPHRASE=
 FOLLOWER1_API_KEY=
 FOLLOWER1_SECRET_KEY=
 FOLLOWER2_API_KEY=
@@ -104,7 +105,18 @@ FEISHU_WEBHOOK=
 FEISHU_SECRET=
 ```
 
-OKX 账户必须提供 passphrase。飞书可在 `config.yaml` 中保持 `enabled: false`，不配置时交易链路不受影响。
+OKX Leader 和 OKX Follower 都必须提供 passphrase。飞书可在 `config.yaml` 中保持 `enabled: false`，不配置时交易链路不受影响。
+
+OKX Leader 配置示例：
+
+```yaml
+leader:
+  id: leader01
+  exchange: okx
+  api_key_env: LEADER_API_KEY
+  secret_key_env: LEADER_SECRET_KEY
+  passphrase_env: LEADER_PASSPHRASE
+```
 
 ## 配置
 

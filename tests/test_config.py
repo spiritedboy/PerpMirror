@@ -12,6 +12,7 @@ def test_example_config_defaults_to_dry_run(monkeypatch, tmp_path: Path) -> None
     config.write_text(source)
     monkeypatch.setenv("LEADER_API_KEY", "x")
     monkeypatch.setenv("LEADER_SECRET_KEY", "x")
+    monkeypatch.setenv("LEADER_PASSPHRASE", "x")
     monkeypatch.setenv("FOLLOWER1_API_KEY", "x")
     monkeypatch.setenv("FOLLOWER1_SECRET_KEY", "x")
     monkeypatch.setenv("FOLLOWER2_API_KEY", "x")
@@ -19,6 +20,16 @@ def test_example_config_defaults_to_dry_run(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setenv("FOLLOWER2_PASSPHRASE", "x")
     settings = load_config(config, tmp_path / ".env")
     assert settings.app.dry_run is True
+
+
+def test_okx_leader_requires_passphrase_env(tmp_path: Path) -> None:
+    source = Path("config.example.yaml").read_text()
+    source = source.replace("exchange: binance", "exchange: okx", 1)
+    source = source.replace("  passphrase_env: LEADER_PASSPHRASE\n", "", 1)
+    config = tmp_path / "config.yaml"
+    config.write_text(source)
+    with pytest.raises(ConfigurationError, match="leader: passphrase_env"):
+        load_config(config, tmp_path / ".env")
 
 
 def test_live_requires_explicit_environment_ack(monkeypatch, tmp_path: Path) -> None:

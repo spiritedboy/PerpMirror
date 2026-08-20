@@ -16,6 +16,8 @@ leader:
   exchange: binance
   api_key_env: LEADER_API_KEY
   secret_key_env: LEADER_SECRET_KEY
+  # Required when exchange is okx; ignored by Binance.
+  passphrase_env: LEADER_PASSPHRASE
 
 followers:
   - id: binance_fixed

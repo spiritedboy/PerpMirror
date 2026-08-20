@@ -119,6 +119,8 @@ def load_config(
         secret_key_env=str(leader_raw["secret_key_env"]),
         passphrase_env=leader_raw.get("passphrase_env"),
     )
+    if leader.exchange == Exchange.OKX and not leader.passphrase_env:
+        raise ConfigurationError("leader: passphrase_env is required for OKX")
     followers_raw = root.get("followers")
     if not isinstance(followers_raw, list) or not followers_raw:
         raise ConfigurationError("followers must be a non-empty list")
@@ -137,10 +139,13 @@ def load_config(
             raise ConfigurationError(f"{follower_id}: fixed_margin_usdt must be positive")
         if mode == CopyMode.RATIO and (ratio is None or ratio <= 0):
             raise ConfigurationError(f"{follower_id}: copy_ratio must be positive")
+        follower_exchange = Exchange(str(row["exchange"]).lower())
+        if follower_exchange == Exchange.OKX and not row.get("passphrase_env"):
+            raise ConfigurationError(f"{follower_id}: passphrase_env is required for OKX")
         followers.append(
             FollowerConfig(
                 id=follower_id,
-                exchange=Exchange(str(row["exchange"]).lower()),
+                exchange=follower_exchange,
                 api_key_env=str(row["api_key_env"]),
                 secret_key_env=str(row["secret_key_env"]),
                 passphrase_env=row.get("passphrase_env"),
