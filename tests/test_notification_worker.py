@@ -23,7 +23,7 @@ class FailingNotifier(Notifier):
 
 
 @pytest.mark.asyncio
-async def test_notification_failure_is_contained_and_worker_stops() -> None:
+async def test_notification_failure_is_contained_without_disabling_later_delivery() -> None:
     notifier = FailingNotifier()
     worker = NotificationWorker(notifier, max_retries=1)
     worker.start()
@@ -31,8 +31,39 @@ async def test_notification_failure_is_contained_and_worker_stops() -> None:
     await asyncio.wait_for(worker.queue.join(), timeout=1)
     worker.publish({"header": {"second": True}})
     await worker.stop()
-    assert notifier.calls == 1
+    assert notifier.calls == 2
     assert notifier.closed is True
+
+
+class FailOnceNotifier(Notifier):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.delivered: list[dict[str, Any]] = []
+
+    async def send_card(self, card: dict[str, Any]) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("simulated permanent rejection")
+        self.delivered.append(card)
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_later_notification_can_recover_after_permanent_error() -> None:
+    notifier = FailOnceNotifier()
+    worker = NotificationWorker(notifier, max_retries=1)
+    worker.start()
+    worker.publish({"header": {"title": {"content": "startup"}}})
+    await asyncio.wait_for(worker.queue.join(), timeout=1)
+    trade = {"header": {"title": {"content": "open"}}}
+    worker.publish(trade)
+    await asyncio.wait_for(worker.queue.join(), timeout=1)
+    await worker.stop()
+
+    assert notifier.calls == 2
+    assert notifier.delivered == [trade]
 
 
 class EventuallySuccessfulNotifier(Notifier):

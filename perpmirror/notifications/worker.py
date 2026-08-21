@@ -16,7 +16,6 @@ class NotificationWorker:
         self.max_retries = max_retries
         self.queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=queue_size)
         self._task: asyncio.Task[None] | None = None
-        self._disabled = False
 
     def start(self) -> None:
         if self._task is None:
@@ -24,9 +23,6 @@ class NotificationWorker:
 
     def publish(self, card: dict[str, Any]) -> None:
         title = self._title(card)
-        if self._disabled:
-            logger.error("NOTIFICATION_DROPPED reason=channel_disabled title=%s", title)
-            return
         try:
             self.queue.put_nowait(card)
             logger.info(
@@ -43,8 +39,6 @@ class NotificationWorker:
             try:
                 if card is None:
                     return
-                if self._disabled:
-                    continue
                 for attempt in range(self.max_retries):
                     try:
                         await self.notifier.send_card(card)
@@ -56,8 +50,16 @@ class NotificationWorker:
                             break
                         await asyncio.sleep(float(2**attempt))
                     except Exception as exc:
-                        self._disabled = True
-                        logger.error("notification_disabled permanent_error=true error=%s", exc)
+                        # A rejection of one card/webhook request must not disable
+                        # delivery for the lifetime of a 24/7 process. Feishu
+                        # configuration or group state can be corrected while the
+                        # process is running, and later trade events must still get
+                        # a delivery attempt.
+                        logger.error(
+                            "NOTIFICATION_DELIVERY_FAILED permanent_error=true title=%s error=%s",
+                            self._title(card),
+                            exc,
+                        )
                         break
             finally:
                 self.queue.task_done()
