@@ -47,12 +47,14 @@ class OkxSwapClient(ExchangeClient):
         *,
         base_url: str = "https://openapi.okx.com",
         ws_url: str = "wss://ws.okx.com:8443/ws/v5/private",
+        demo_trading: bool = False,
     ) -> None:
         self.api_key = api_key
         self._secret_key = secret_key.encode()
         self._passphrase = passphrase
         self.http = ReliableHttpClient(base_url)
         self.ws_url = ws_url
+        self.demo_trading = demo_trading
         self._clock_offset_ms = 0
         self._instruments: dict[str, InstrumentInfo] = {}
         self._native_to_normalized: dict[str, str] = {}
@@ -74,6 +76,8 @@ class OkxSwapClient(ExchangeClient):
         request_path = f"{path}?{query}" if query else path
         body_text = json.dumps(body, separators=(",", ":")) if body else ""
         headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.demo_trading:
+            headers["x-simulated-trading"] = "1"
         if private:
             timestamp = self._iso_timestamp()
             signature = self._sign(f"{timestamp}{method}{request_path}{body_text}")
@@ -253,10 +257,16 @@ class OkxSwapClient(ExchangeClient):
         return positions
 
     async def get_position_mode(self) -> PositionMode:
-        rows = await self._request("GET", "/api/v5/account/config", private=True)
-        mode = rows[0].get("posMode") if rows else None
+        config = await self.get_account_configuration()
+        mode = config.get("posMode")
         self._position_mode = PositionMode.HEDGE if mode == "long_short_mode" else PositionMode.ONE_WAY
         return self._position_mode
+
+    async def get_account_configuration(self) -> dict[str, Any]:
+        rows = await self._request("GET", "/api/v5/account/config", private=True)
+        if not rows or not isinstance(rows[0], dict):
+            raise NonRetryableExchangeError("OKX account configuration response is empty")
+        return dict(rows[0])
 
     async def get_margin_mode(self, normalized_symbol: str) -> MarginMode | None:
         position = await self.get_position(normalized_symbol)

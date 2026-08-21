@@ -171,6 +171,26 @@ python -m perpmirror --config /absolute/path/config.yaml --env /absolute/path/.e
 python examples/fake_dry_run.py
 ```
 
+只读检查 OKX API 认证和 `trade` 权限（不下单、不修改账户）：
+
+```bash
+OKX_API_KEY=... OKX_SECRET_KEY=... OKX_PASSPHRASE=... \
+  python scripts/check_okx_api.py
+```
+
+如果使用 OKX Demo Trading API Key，增加 `--demo`。建议将凭据写入被 Git 忽略的 `.env`，而不是放入 shell history：
+
+```env
+OKX_API_KEY=
+OKX_SECRET_KEY=
+OKX_PASSPHRASE=
+```
+
+```bash
+python scripts/check_okx_api.py --demo   # Demo Key
+python scripts/check_okx_api.py          # Production Key
+```
+
 ## 飞书通知
 
 使用群自定义机器人的 Interactive Message Card，不发送简单文本。OPEN、ADD、REDUCE、CLOSE、FLIP、失败和风控卡片由统一事件模型渲染；DRY_RUN 卡片有明显黄色模拟标记。通知经过有界 `asyncio.Queue`，最多重试三次并指数退避，永久失败会丢弃并记录错误，绝不会阻塞交易或 WS。
