@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Any
 
 import pytest
@@ -48,7 +49,8 @@ class EventuallySuccessfulNotifier(Notifier):
 
 
 @pytest.mark.asyncio
-async def test_retryable_notification_error_still_retries() -> None:
+async def test_retryable_notification_error_still_retries(caplog) -> None:
+    caplog.set_level(logging.INFO)
     notifier = EventuallySuccessfulNotifier()
     worker = NotificationWorker(notifier, max_retries=3)
     worker.start()
@@ -56,3 +58,5 @@ async def test_retryable_notification_error_still_retries() -> None:
     await asyncio.wait_for(worker.queue.join(), timeout=5)
     await worker.stop()
     assert notifier.calls == 3
+    assert "NOTIFICATION_QUEUED" in caplog.text
+    assert "NOTIFICATION_DELIVERED" in caplog.text

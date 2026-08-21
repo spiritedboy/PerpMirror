@@ -1,6 +1,7 @@
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import make_position
@@ -10,6 +11,19 @@ from perpmirror.config import AccountConfig, AppConfig, FeishuConfig, RiskConfig
 from perpmirror.enums import CopyMode, Exchange
 from perpmirror.fake.exchange import FakeExchangeClient
 from perpmirror.models import FollowerConfig
+from perpmirror.notifications.base import Notifier
+from perpmirror.notifications.worker import NotificationWorker
+
+
+class CapturingNotifier(Notifier):
+    def __init__(self) -> None:
+        self.cards: list[dict[str, Any]] = []
+
+    async def send_card(self, card: dict[str, Any]) -> None:
+        self.cards.append(card)
+
+    async def close(self) -> None:
+        return None
 
 
 def incremental_settings(state_path: Path) -> Settings:
@@ -175,3 +189,38 @@ async def test_manual_follower_close_suspends_copy_until_leader_reopens(
     assert len(reopened) == 1
     assert len(follower.orders) == 2
     assert await follower.get_position("BTC-USDT-PERP") is not None
+
+
+@pytest.mark.asyncio
+async def test_open_and_close_cards_reach_notification_delivery_worker(
+    monkeypatch, tmp_path: Path, instrument
+) -> None:
+    leader = FakeExchangeClient(instruments=[instrument])
+    follower = FakeExchangeClient(instruments=[instrument])
+    clients = iter((leader, follower))
+    monkeypatch.setattr(
+        PerpMirrorApp,
+        "_client",
+        staticmethod(lambda exchange, api_key, secret, passphrase: next(clients)),
+    )
+    monkeypatch.setenv("LEADER_KEY", "x")
+    monkeypatch.setenv("LEADER_SECRET", "x")
+    monkeypatch.setenv("FOLLOWER_KEY", "x")
+    monkeypatch.setenv("FOLLOWER_SECRET", "x")
+    app = PerpMirrorApp(incremental_settings(tmp_path / "ownership.json"))
+    app.mapper.add_instruments(Exchange.FAKE, await follower.get_instruments())
+    await app.initialize_position_ownership()
+    notifier = CapturingNotifier()
+    app.notifications = NotificationWorker(notifier, max_retries=1)
+    app.notifications.start()
+
+    leader._positions["BTC-USDT-PERP"] = make_position("100")
+    await app.full_reconcile()
+    await app.notifications.queue.join()
+    leader._positions.pop("BTC-USDT-PERP")
+    await app.full_reconcile()
+    await app.notifications.queue.join()
+    await app.notifications.stop()
+
+    titles = [card["header"]["title"]["content"] for card in notifier.cards]
+    assert titles == ["🟢 开仓 · BTC-USDT-PERP", "🔴 平仓 · BTC-USDT-PERP"]

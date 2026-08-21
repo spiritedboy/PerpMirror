@@ -199,7 +199,7 @@ python scripts/check_okx_api.py          # Production Key
 
 ## 飞书通知
 
-使用简洁的 Interactive Message Card：标题显示开仓、加仓、减仓、平仓、反手、失败或风控动作，正文只保留账户、方向、前后仓位、目标、本次订单、杠杆和时间；权益、敞口比例、订单号等详细信息留在日志中。DRY_RUN 卡片有明显黄色模拟标记。通知经过有界 `asyncio.Queue`，临时网络/服务端错误最多重试三次并指数退避；Webhook 已失效、群不存在等永久错误会在当前进程内熔断，绝不会阻塞交易或 WS。
+使用简洁的 Interactive Message Card：标题显示开仓、加仓、减仓、平仓、反手、失败或风控动作，正文只保留账户、方向、前后仓位、目标、本次订单、杠杆和时间；权益、敞口比例、订单号等详细信息留在日志中。DRY_RUN 卡片有明显黄色模拟标记。只要本轮存在真实订单回执，即使最终对账已变成 NOOP，也强制发送交易通知。交互卡片被飞书拒绝时自动降级为纯文本。通知经过有界 `asyncio.Queue`，临时网络/服务端错误最多重试三次并指数退避；Webhook 已失效、群不存在等永久错误会在当前进程内熔断，绝不会阻塞交易或 WS。`NOTIFICATION_QUEUED` 与 `NOTIFICATION_DELIVERED` 日志可用于确认入队和实际送达。
 
 配置群机器人 Webhook 和可选签名 Secret 后：
 

@@ -5,10 +5,10 @@ from conftest import make_position
 
 from perpmirror.app import PerpMirrorApp
 from perpmirror.config import AccountConfig, AppConfig, FeishuConfig, RiskConfig, Settings
-from perpmirror.enums import CopyMode, Exchange, MarginMode
+from perpmirror.enums import CopyMode, Exchange, MarginMode, OrderStatus, ReconcileAction
 from perpmirror.exceptions import ConfigurationError, NonRetryableExchangeError
 from perpmirror.fake.exchange import FakeExchangeClient
-from perpmirror.models import FollowerConfig
+from perpmirror.models import FollowerConfig, OrderResult, ReconcileResult
 
 
 class PermissionFake(FakeExchangeClient):
@@ -64,6 +64,28 @@ def install_env(monkeypatch, *follower_ids: str) -> None:
     for follower_id in follower_ids:
         monkeypatch.setenv(f"{follower_id.upper()}_KEY", "x")
         monkeypatch.setenv(f"{follower_id.upper()}_SECRET", "x")
+
+
+def test_actual_order_always_forces_notification_even_if_result_is_noop() -> None:
+    result = ReconcileResult(
+        follower_id="follower",
+        symbol="BTC-USDT-PERP",
+        action=ReconcileAction.NOOP,
+        target_notional=Decimal("400"),
+        previous_notional=Decimal("0"),
+        final_notional=Decimal("400"),
+        order_results=(
+            OrderResult(
+                exchange=Exchange.FAKE,
+                symbol="BTCUSDT",
+                client_order_id="pm-test",
+                status=OrderStatus.FILLED,
+            ),
+        ),
+        notification_suppressed=True,
+    )
+
+    assert PerpMirrorApp._should_notify(result) is True
 
 
 @pytest.mark.asyncio

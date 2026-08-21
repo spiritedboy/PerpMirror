@@ -282,16 +282,22 @@ class PerpMirrorApp:
                         and result.final_notional == ZERO
                     ):
                         self.ownership.release(follower_config.id, symbol)
-                    if (
-                        result.action != ReconcileAction.NOOP
-                        and not result.notification_suppressed
-                    ):
+                    # An exchange order is always notification-worthy. The
+                    # order evidence takes precedence over a later NOOP
+                    # classification or a failure-cooldown suppression flag.
+                    if self._should_notify(result):
                         self.notifications.publish(
                             self.cards.trade(
                                 self._notification(target, result), dry_run=self.settings.app.dry_run
                             )
                         )
             return results
+
+    @staticmethod
+    def _should_notify(result: ReconcileResult) -> bool:
+        return bool(result.order_results) or (
+            result.action != ReconcileAction.NOOP and not result.notification_suppressed
+        )
 
     async def _safe_reconcile(
         self, client: ExchangeClient, target: FollowerTarget
