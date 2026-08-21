@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import replace
 from decimal import Decimal
 
 from perpmirror.enums import OrderSide, OrderStatus, PositionSide
@@ -40,6 +41,9 @@ class ExecutionEngine:
         quantity = instrument.quantity_for_notional(order_notional, price)
         if reduce_only and actual is not None:
             quantity = min(quantity, actual.quantity)
+        if instrument.max_quantity is not None and instrument.max_quantity > ZERO:
+            max_quantity = instrument.floor_quantity(instrument.max_quantity)
+            quantity = min(quantity, max_quantity)
         if quantity <= ZERO or quantity < instrument.min_quantity:
             raise UnsafeOperation("normalized order quantity is below the instrument minimum")
         normalized_notional = instrument.notional_for_quantity(quantity, price)
@@ -96,6 +100,16 @@ class ExecutionEngine:
         self, client: ExchangeClient, target: FollowerTarget, actual: PositionSnapshot
     ) -> OrderResult:
         client_id = self.client_order_id(target.follower_id, target.symbol, "close")
+        close_position = actual
+        instrument = await client.get_instrument(target.symbol)
+        if (
+            instrument is not None
+            and instrument.max_quantity is not None
+            and instrument.max_quantity > ZERO
+        ):
+            max_quantity = instrument.floor_quantity(instrument.max_quantity)
+            if max_quantity > ZERO and actual.quantity > max_quantity:
+                close_position = replace(actual, quantity=max_quantity)
         if self.dry_run:
             return OrderResult(
                 exchange=client.exchange,
@@ -105,7 +119,7 @@ class ExecutionEngine:
                 raw_status="would_close_reduce_only",
             )
         try:
-            return await client.close_position(actual, client_id)
+            return await client.close_position(close_position, client_id)
         except UnknownOrderState as exc:
             verified = await client.verify_order(actual.symbol, exc.client_order_id)
             if verified is not None and verified.status in {

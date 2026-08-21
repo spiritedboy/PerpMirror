@@ -3,11 +3,11 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from perpmirror.enums import MarginMode, OrderSide, PositionMode, PositionSide
+from perpmirror.enums import Exchange, MarginMode, OrderSide, PositionMode, PositionSide
 from perpmirror.exceptions import AuthenticationError, NonRetryableExchangeError
 from perpmirror.exchanges.binance import BinanceFuturesClient
 from perpmirror.exchanges.okx import OkxSwapClient
-from perpmirror.models import OrderRequest
+from perpmirror.models import InstrumentInfo, OrderRequest
 
 
 @pytest.mark.asyncio
@@ -125,6 +125,182 @@ async def test_okx_top_level_failure_includes_item_error(monkeypatch) -> None:
         match=r"All operations failed.*51008.*Insufficient available balance",
     ):
         await client._request("POST", "/api/v5/trade/order", body={"sz": "1"})
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_rejects_non_object_payload(monkeypatch) -> None:
+    client = OkxSwapClient("key", "secret", "pass")
+
+    async def request(method, path, **kwargs):
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr(client.http, "request", request)
+    with pytest.raises(NonRetryableExchangeError, match="invalid payload"):
+        await client._request("GET", "/api/v5/account/config", private=True)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_signature_fixed_vector() -> None:
+    client = OkxSwapClient("key", "test-secret", "pass")
+    prehash = "2026-08-21T04:00:00.000ZGET/api/v5/account/config"
+    assert client._sign(prehash) == "AwWsvG5HZ3cEdhoufWR8D9FqKZxjxFuthgtJs5MCtU0="
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_binance_signature_fixed_vector(monkeypatch) -> None:
+    client = BinanceFuturesClient("key", "test-secret")
+    captured = {}
+
+    async def request(method, path, **kwargs):
+        captured.update(kwargs.get("params") or {})
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr("perpmirror.exchanges.binance.time.time", lambda: 1787284800)
+    monkeypatch.setattr(client.http, "request", request)
+    await client._signed("GET", "/fapi/v2/positionRisk", {"symbol": "BTCUSDT"})
+    assert captured["signature"] == (
+        "3828c04bcaa963418d2ebcfba6bf4ebf290fbf3b5ce45dc68bc70e10a9eb100c"
+    )
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_binance_positions_use_v2_leverage_and_margin_type(monkeypatch) -> None:
+    client = BinanceFuturesClient("key", "secret")
+    instrument = InstrumentInfo(
+        exchange=Exchange.BINANCE,
+        symbol="BTCUSDT",
+        normalized_symbol="BTC-USDT-PERP",
+        base_currency="BTC",
+        quote_currency="USDT",
+        settle_currency="USDT",
+        quantity_step=Decimal("0.001"),
+        min_quantity=Decimal("0.001"),
+    )
+    client._instruments = {instrument.normalized_symbol: instrument}
+    client._native_to_normalized = {instrument.symbol: instrument.normalized_symbol}
+
+    async def signed(method, path, params=None, **kwargs):
+        assert path == "/fapi/v2/positionRisk"
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "positionAmt": "0.01",
+                "entryPrice": "59000",
+                "markPrice": "60000",
+                "notional": "600",
+                "leverage": "20",
+                "marginType": "isolated",
+                "unRealizedProfit": "10",
+                "liquidationPrice": "55000",
+            }
+        ]
+
+    monkeypatch.setattr(client, "_signed", signed)
+    position = (await client.get_positions())["BTC-USDT-PERP"]
+    assert position.quantity == Decimal("0.01")
+    assert position.abs_notional == Decimal("600")
+    assert position.leverage == Decimal("20")
+    assert position.margin_mode == MarginMode.ISOLATED
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_binance_open_position_never_guesses_missing_leverage(monkeypatch) -> None:
+    client = BinanceFuturesClient("key", "secret")
+    instrument = InstrumentInfo(
+        exchange=Exchange.BINANCE,
+        symbol="BTCUSDT",
+        normalized_symbol="BTC-USDT-PERP",
+        base_currency="BTC",
+        quote_currency="USDT",
+        settle_currency="USDT",
+        quantity_step=Decimal("0.001"),
+        min_quantity=Decimal("0.001"),
+    )
+    client._instruments = {instrument.normalized_symbol: instrument}
+    client._native_to_normalized = {instrument.symbol: instrument.normalized_symbol}
+
+    async def signed(method, path, params=None, **kwargs):
+        return [
+            {
+                "symbol": "BTCUSDT",
+                "positionAmt": "0.01",
+                "markPrice": "60000",
+                "notional": "600",
+                "marginType": "cross",
+            }
+        ]
+
+    monkeypatch.setattr(client, "_signed", signed)
+    with pytest.raises(NonRetryableExchangeError, match="leverage is missing or invalid"):
+        await client.get_positions()
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_position_keeps_contract_count_and_normalized_notional(monkeypatch) -> None:
+    client = OkxSwapClient("key", "secret", "pass")
+
+    async def request(method, path, params=None, body=None, **kwargs):
+        if path == "/api/v5/public/instruments":
+            return [
+                {
+                    "instId": "HYPE-USDT-SWAP",
+                    "instType": "SWAP",
+                    "settleCcy": "USDT",
+                    "ctValCcy": "HYPE",
+                    "ctType": "linear",
+                    "ctVal": "10",
+                    "ctMult": "1",
+                    "lotSz": "1",
+                    "minSz": "1",
+                    "maxMktSz": "1000",
+                    "tickSz": "0.001",
+                    "state": "live",
+                }
+            ]
+        assert path == "/api/v5/account/positions"
+        return [
+            {
+                "instId": "HYPE-USDT-SWAP",
+                "pos": "3",
+                "posSide": "long",
+                "markPx": "25",
+                "notionalUsd": "750",
+                "avgPx": "24",
+                "lever": "5",
+                "mgnMode": "cross",
+                "upl": "30",
+                "liqPx": "20",
+            }
+        ]
+
+    monkeypatch.setattr(client, "_request", request)
+    position = (await client.get_positions())["HYPE-USDT-PERP"]
+    assert position.quantity == Decimal("3")  # native OKX contract count, used by sz
+    assert position.abs_notional == Decimal("750")
+    assert position.abs_notional != position.quantity * position.mark_price
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_account_configuration_reuses_permissions_snapshot(monkeypatch) -> None:
+    client = OkxSwapClient("key", "secret", "pass")
+    calls = 0
+
+    async def request(method, path, params=None, body=None, **kwargs):
+        nonlocal calls
+        calls += 1
+        return [{"posMode": "long_short_mode", "perm": "read_only,trade"}]
+
+    monkeypatch.setattr(client, "_request", request)
+    assert await client.get_position_mode() == PositionMode.HEDGE
+    assert await client.get_api_permissions() == frozenset({"read_only", "trade"})
+    assert calls == 1
     await client.close()
 
 

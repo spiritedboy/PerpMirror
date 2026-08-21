@@ -33,6 +33,7 @@ Periodic full reconcile ──────┤
 - 不确定等于不增加风险。订单 HTTP 状态未知时先按 client order ID 查询，并重读仓位，绝不盲目重下。
 - 反手分成 reduce-only 平旧方向、确认归零、开新方向三段；禁止一次下“双倍数量”反手。
 - 每个 follower+symbol 有独立异步锁，不同标的受全局信号量控制。
+- Follower 快照和单标的对账相互隔离；一个账户/标的故障只记录该项失败，不中断其他账户。
 - 风控区分增加风险和减少风险；超限不应阻止退出，Kill Switch 行为由配置明确控制。
 - 业务层只处理统一模型；交易所原始 JSON 只在 Binance/OKX 适配器内解析。
 - 核心金额、价格、数量、杠杆和合约换算全部使用 `Decimal`。
@@ -106,6 +107,8 @@ FEISHU_SECRET=
 ```
 
 OKX Leader 和 OKX Follower 都必须提供 passphrase。飞书可在 `config.yaml` 中保持 `enabled: false`，不配置时交易链路不受影响。
+
+启动检查会读取 OKX `account/config.perm`：Follower 必须包含 `trade`，任意 OKX Key 一旦包含 `withdraw` 都会拒绝启动。Binance USDⓈ-M 仓位接口不返回同等的 Key 权限清单，因此 Binance 的提现权限仍需在控制台人工确认。
 
 OKX Leader 配置示例：
 
@@ -210,9 +213,11 @@ feishu:
 
 ## 交易所精度与模式
 
-Binance 启动时读取 `/fapi/v1/exchangeInfo`，市价单使用 `MARKET_LOT_SIZE`（缺失才回退到 `LOT_SIZE`），并校验 `MIN_NOTIONAL`。不会用 `quantityPrecision` 简单 round。
+Binance 启动时读取 `/fapi/v1/exchangeInfo`，市价单使用 `MARKET_LOT_SIZE`（缺失才回退到 `LOT_SIZE`），并校验 `MIN_NOTIONAL`。仓位读取使用 `/fapi/v2/positionRisk`，因为该响应明确包含 `leverage` 和 `marginType`；不会把 V3 缺失字段猜成 1 倍或 Cross。不会用 `quantityPrecision` 简单 round。
 
-OKX 的 `sz` 是合约张数。系统使用 `ctVal × ctMult × markPrice` 将目标名义价值转换成张数，再按 `lotSz` 向下截断，并校验 `minSz`。第一版只接受 `ctType=linear` 且 `settleCcy=USDT` 的 SWAP。
+OKX 的 `pos/sz` 是合约张数，不是标的币数量。系统保留原生张数用于下单和平仓，同时使用交易所 `notionalUsd` 做跨所目标计算和风控；缺失时才按 `合约张数 × ctVal × ctMult × markPrice` 计算。目标名义价值转换成张数后按 `lotSz` 向下截断，并校验 `minSz`。第一版只接受 `ctType=linear` 且 `settleCcy=USDT` 的 SWAP。
+
+Binance `MARKET_LOT_SIZE.maxQty` 和 OKX `maxMktSz` 都作为单笔市价单上限。目标或待平数量超过上限时会分批下单，并在每批后重新读取真实仓位继续收敛。
 
 程序只检测并适配 Position Mode，不会擅自修改整个账户模式。Binance Hedge Mode 使用 `positionSide`；OKX long/short mode 使用 `posSide`。OKX 的 cross/isolated 由订单 `tdMode` 选择。
 
@@ -263,7 +268,7 @@ mypy perpmirror
 python -m compileall -q perpmirror
 ```
 
-测试覆盖 FIXED/RATIO、开加减平、双向反手、幂等、重启等价状态、启动仓位保护、所有权持久化、漂移阈值、风控、DRY_RUN、部分成交、HTTP 超时但已成交、符号映射、Binance 数量截断、OKX 合约张数、WS pending tick 和飞书 JSON/Secret 脱敏。
+测试覆盖 FIXED/RATIO、开加减平、双向反手、幂等、重启等价状态、启动仓位保护、所有权持久化、漂移阈值、风控、DRY_RUN、部分成交、HTTP 超时但已成交、Follower 故障隔离、固定签名向量、交易所单笔上限分批、Binance V2 仓位字段、OKX 合约张数、WS pending tick 和飞书 JSON/Secret 脱敏。
 
 ## LIVE 前检查清单
 
@@ -289,3 +294,5 @@ python -m perpmirror
 - [Binance USDⓈ-M Futures API](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/Introduction)
 - [OKX API V5](https://www.okx.com/docs-v5/en/)
 - [飞书自定义机器人发送飞书卡片（Card JSON 2.0）](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/quick-start/send-message-cards-with-custom-bot)
+
+交易所接入复盘和本项目的取舍记录见 [`docs/exchange-integration-notes.md`](docs/exchange-integration-notes.md)。

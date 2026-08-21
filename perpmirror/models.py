@@ -27,6 +27,7 @@ def decimal(value: Any, default: Decimal = ZERO) -> Decimal:
 
 @dataclass(frozen=True, slots=True)
 class InstrumentInfo:
+    """Tradable instrument metadata with an explicit native-order quantity unit."""
     exchange: Exchange
     symbol: str
     normalized_symbol: str
@@ -65,6 +66,13 @@ class InstrumentInfo:
 
 @dataclass(frozen=True, slots=True)
 class PositionSnapshot:
+    """Position normalized to USDT while retaining native exchange order quantity.
+
+    ``quantity`` is base-asset quantity on Binance USD-M and contract count on
+    OKX SWAP. ``notional_usdt`` is the cross-exchange field used for sizing and
+    risk. Keeping both prevents an OKX contract count from being mistaken for
+    an underlying-asset quantity when closing a position.
+    """
     exchange: Exchange
     symbol: str
     normalized_symbol: str

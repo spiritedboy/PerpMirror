@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -130,6 +131,27 @@ async def test_partial_fills_converge_by_reconciliation(instrument) -> None:
     assert final is not None
     assert abs(final.abs_notional - Decimal("1000")) <= Decimal("10")
     assert len(client.orders) > 1
+
+
+@pytest.mark.asyncio
+async def test_exchange_market_order_max_is_chunked_for_open_and_close(instrument) -> None:
+    capped = replace(instrument, max_quantity=Decimal("1"))
+    client = FakeExchangeClient(instruments=[capped])
+    reconciler = make_reconciler(retries=12)
+
+    opened = await reconciler.reconcile(client, target_for("1000"))
+    assert opened.success is True
+    assert len(client.orders) == 10
+    assert all(order.quantity <= Decimal("1") for order in client.orders)
+
+    flat = TargetCalculator().calculate(
+        make_follower(), None, Decimal("10000"), Decimal("1000"), "BTC-USDT-PERP"
+    )
+    closed = await reconciler.reconcile(client, flat)
+    assert closed.success is True
+    assert await client.get_position("BTC-USDT-PERP") is None
+    assert len(client.orders) == 20
+    assert all(order.quantity <= Decimal("1") for order in client.orders)
 
 
 @pytest.mark.asyncio

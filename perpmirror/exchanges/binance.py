@@ -179,7 +179,10 @@ class BinanceFuturesClient(ExchangeClient):
 
     async def get_positions(self) -> dict[str, PositionSnapshot]:
         await self.get_instruments()
-        rows = await self._signed("GET", "/fapi/v3/positionRisk")
+        # V3 omits leverage and marginType. Those fields affect copied leverage
+        # and order td/margin semantics, so use the documented V2 response
+        # instead of guessing defaults for a live position.
+        rows = await self._signed("GET", "/fapi/v2/positionRisk")
         positions: dict[str, PositionSnapshot] = {}
         for row in rows:
             quantity_signed = decimal(row.get("positionAmt"))
@@ -198,6 +201,20 @@ class BinanceFuturesClient(ExchangeClient):
             notional = abs(decimal(row.get("notional")))
             if notional == ZERO:
                 notional = abs(quantity_signed) * mark
+            leverage = decimal(row.get("leverage"))
+            if leverage <= ZERO:
+                raise NonRetryableExchangeError(
+                    f"Binance position leverage is missing or invalid: {native}"
+                )
+            margin_type = str(row.get("marginType", "")).lower()
+            if margin_type == "isolated":
+                margin_mode = MarginMode.ISOLATED
+            elif margin_type in {"cross", "crossed"}:
+                margin_mode = MarginMode.CROSS
+            else:
+                raise NonRetryableExchangeError(
+                    f"Binance position margin type is missing or invalid: {native}"
+                )
             positions[normalized] = PositionSnapshot(
                 exchange=self.exchange,
                 symbol=native,
@@ -207,8 +224,8 @@ class BinanceFuturesClient(ExchangeClient):
                 notional_usdt=notional,
                 entry_price=decimal(row.get("entryPrice")) or None,
                 mark_price=mark,
-                leverage=decimal(row.get("leverage"), Decimal("1")),
-                margin_mode=MarginMode.ISOLATED if bool(row.get("isolated")) else MarginMode.CROSS,
+                leverage=leverage,
+                margin_mode=margin_mode,
                 unrealized_pnl=decimal(row.get("unRealizedProfit")),
                 liquidation_price=decimal(row.get("liquidationPrice")) or None,
             )

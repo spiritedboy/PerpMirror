@@ -41,6 +41,10 @@ class ExchangeClient(ABC):
     @abstractmethod
     async def get_position_mode(self) -> PositionMode: ...
 
+    async def get_api_permissions(self) -> frozenset[str] | None:
+        """Return normalized API-key permissions when the exchange exposes them."""
+        return None
+
     @abstractmethod
     async def get_margin_mode(self, normalized_symbol: str) -> MarginMode | None: ...
 

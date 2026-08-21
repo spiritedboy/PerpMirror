@@ -32,6 +32,7 @@ from perpmirror.exceptions import (
 from perpmirror.exchanges.base import EventCallback, ExchangeClient, StateCallback
 from perpmirror.exchanges.http import ReliableHttpClient
 from perpmirror.models import ZERO, InstrumentInfo, OrderRequest, OrderResult, PositionSnapshot, decimal
+from perpmirror.okx_check import parse_permissions
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class OkxSwapClient(ExchangeClient):
         self._instruments: dict[str, InstrumentInfo] = {}
         self._native_to_normalized: dict[str, str] = {}
         self._position_mode: PositionMode | None = None
+        self._account_configuration: dict[str, Any] | None = None
         self._closed = asyncio.Event()
 
     async def _request(
@@ -109,6 +111,10 @@ class OkxSwapClient(ExchangeClient):
             raise NonRetryableExchangeError(
                 f"OKX returned non-JSON HTTP {response.status_code} during {method} {path}"
             ) from exc
+        if not isinstance(data, dict):
+            raise NonRetryableExchangeError(
+                f"OKX returned an invalid payload during {method} {path}"
+            )
         code = str(data.get("code", "0"))
         if code != "0":
             if code == "50102" and timestamp_retry:
@@ -257,6 +263,14 @@ class OkxSwapClient(ExchangeClient):
             notional = abs(decimal(row.get("notionalUsd")))
             if notional == ZERO:
                 notional = instrument.notional_for_quantity(abs(pos), mark)
+            leverage = decimal(row.get("lever"))
+            if leverage <= ZERO:
+                raise NonRetryableExchangeError(
+                    f"OKX position leverage is missing or invalid: {native}"
+                )
+            margin_mode_raw = str(row.get("mgnMode", "")).lower()
+            if margin_mode_raw not in {MarginMode.CROSS.value, MarginMode.ISOLATED.value}:
+                raise NonRetryableExchangeError(f"OKX position margin mode is invalid: {native}")
             positions[normalized] = PositionSnapshot(
                 exchange=self.exchange,
                 symbol=native,
@@ -266,8 +280,8 @@ class OkxSwapClient(ExchangeClient):
                 notional_usdt=notional,
                 entry_price=decimal(row.get("avgPx")) or None,
                 mark_price=mark,
-                leverage=decimal(row.get("lever"), Decimal("1")),
-                margin_mode=MarginMode(str(row.get("mgnMode", "cross"))),
+                leverage=leverage,
+                margin_mode=MarginMode(margin_mode_raw),
                 unrealized_pnl=decimal(row.get("upl")),
                 liquidation_price=decimal(row.get("liqPx")) or None,
             )
@@ -280,10 +294,17 @@ class OkxSwapClient(ExchangeClient):
         return self._position_mode
 
     async def get_account_configuration(self) -> dict[str, Any]:
+        if self._account_configuration is not None:
+            return dict(self._account_configuration)
         rows = await self._request("GET", "/api/v5/account/config", private=True)
         if not rows or not isinstance(rows[0], dict):
             raise NonRetryableExchangeError("OKX account configuration response is empty")
-        return dict(rows[0])
+        self._account_configuration = dict(rows[0])
+        return dict(self._account_configuration)
+
+    async def get_api_permissions(self) -> frozenset[str] | None:
+        configuration = await self.get_account_configuration()
+        return parse_permissions(configuration.get("perm"))
 
     async def get_margin_mode(self, normalized_symbol: str) -> MarginMode | None:
         position = await self.get_position(normalized_symbol)

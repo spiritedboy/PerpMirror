@@ -120,6 +120,16 @@ class PerpMirrorApp:
                     raise ConfigurationError(f"{client.exchange.value}: no active USDT perpetual instruments")
                 self.mapper.add_instruments(client.exchange, instruments)
                 mode = await client.get_position_mode()
+                permissions = await client.get_api_permissions()
+                if permissions is not None:
+                    if "withdraw" in permissions:
+                        raise ConfigurationError(
+                            f"{client.exchange.value}: API key has forbidden withdraw permission"
+                        )
+                    if role == "follower" and "trade" not in permissions:
+                        raise ConfigurationError(
+                            f"{client.exchange.value}: follower API key lacks trade permission"
+                        )
                 equity = await client.get_equity()
                 await client.get_positions()
                 if equity < ZERO:
@@ -162,8 +172,25 @@ class PerpMirrorApp:
             results: list[ReconcileResult] = []
             for follower_config in self.settings.followers:
                 client = self.followers[follower_config.id]
-                follower_equity = await client.get_equity()
-                follower_positions = await client.get_positions()
+                try:
+                    follower_equity = await client.get_equity()
+                    follower_positions = await client.get_positions()
+                except PerpMirrorError as exc:
+                    logger.error(
+                        "FOLLOWER_SNAPSHOT_FAILED follower=%s exchange=%s error=%s",
+                        follower_config.id,
+                        client.exchange.value,
+                        exc,
+                    )
+                    continue
+                except Exception as exc:
+                    logger.exception(
+                        "FOLLOWER_SNAPSHOT_CRASH follower=%s exchange=%s error=%s",
+                        follower_config.id,
+                        client.exchange.value,
+                        exc,
+                    )
+                    continue
                 if self.ownership is None:
                     symbols = set(leader_positions) | set(follower_positions)
                 else:
@@ -191,16 +218,35 @@ class PerpMirrorApp:
                         if leader_position is None:
                             continue
                         self.ownership.claim(follower_config.id, symbol)
-                    target = self.calculator.calculate(
-                        follower_config,
-                        leader_position,
-                        leader_equity,
-                        follower_equity,
-                        symbol,
-                    )
+                    try:
+                        target = self.calculator.calculate(
+                            follower_config,
+                            leader_position,
+                            leader_equity,
+                            follower_equity,
+                            symbol,
+                        )
+                    except PerpMirrorError as exc:
+                        logger.error(
+                            "TARGET_FAILED follower=%s exchange=%s symbol=%s error=%s",
+                            follower_config.id,
+                            client.exchange.value,
+                            symbol,
+                            exc,
+                        )
+                        continue
+                    except Exception as exc:
+                        logger.exception(
+                            "TARGET_CRASH follower=%s exchange=%s symbol=%s error=%s",
+                            follower_config.id,
+                            client.exchange.value,
+                            symbol,
+                            exc,
+                        )
+                        continue
                     targets.append(target)
                     target_symbols.append(symbol)
-                    coroutines.append(self.reconciler.reconcile(client, target))
+                    coroutines.append(self._safe_reconcile(client, target))
                 if not coroutines:
                     continue
                 follower_results = await asyncio.gather(*coroutines)
@@ -226,6 +272,43 @@ class PerpMirrorApp:
                             )
                         )
             return results
+
+    async def _safe_reconcile(
+        self, client: ExchangeClient, target: FollowerTarget
+    ) -> ReconcileResult:
+        try:
+            return await self.reconciler.reconcile(client, target)
+        except PerpMirrorError as exc:
+            logger.error(
+                "RECONCILE_FAILED follower=%s exchange=%s symbol=%s error=%s",
+                target.follower_id,
+                client.exchange.value,
+                target.symbol,
+                exc,
+            )
+            return self._unconfirmed_failure(target, exc)
+        except Exception as exc:
+            logger.exception(
+                "RECONCILE_CRASH follower=%s exchange=%s symbol=%s error=%s",
+                target.follower_id,
+                client.exchange.value,
+                target.symbol,
+                exc,
+            )
+            return self._unconfirmed_failure(target, exc)
+
+    @staticmethod
+    def _unconfirmed_failure(target: FollowerTarget, exc: Exception) -> ReconcileResult:
+        return ReconcileResult(
+            follower_id=target.follower_id,
+            symbol=target.symbol,
+            action=ReconcileAction.ORDER_FAILED,
+            target_notional=target.target_notional,
+            previous_notional=ZERO,
+            final_notional=None,
+            success=False,
+            message=f"reconciliation failed before exchange state could be confirmed: {exc}",
+        )
 
     async def _coalesced_reconcile(self) -> None:
         await self.full_reconcile()
