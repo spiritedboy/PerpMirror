@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from perpmirror.enums import ReconcileAction
+from perpmirror.enums import CopyMode, ReconcileAction
 from perpmirror.logging_utils import SecretRedactionFilter
 from perpmirror.models import TradeNotification
 
@@ -42,10 +42,20 @@ class FeishuCardBuilder:
             f"{self._side_labels[event.side.value]} · {_number(event.previous_notional, ' U')} → "
             f"{_number(display_after, ' U')}"
         )
-        order_line = (
-            f"目标 {_number(event.target_notional, ' U')} · "
-            f"本次 {_number(event.order_notional, ' U')} · {_number(event.leverage, 'x')}"
-        )
+        if (
+            event.copy_mode == CopyMode.FIXED
+            and event.fixed_margin is not None
+            and event.target_notional > 0
+        ):
+            order_line = (
+                f"保证金 {_number(event.fixed_margin, ' U')} × {_number(event.leverage, 'x')}"
+                f" = {_number(event.target_notional, ' U')} · 本次 {_number(event.order_notional, ' U')}"
+            )
+        else:
+            order_line = (
+                f"目标 {_number(event.target_notional, ' U')} · "
+                f"本次 {_number(event.order_notional, ' U')} · {_number(event.leverage, 'x')}"
+            )
         lines = [account_line, position_line, order_line]
         if event.error_code:
             lines.append(f"错误码 `{event.error_code}`")

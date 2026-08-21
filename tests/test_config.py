@@ -22,6 +22,8 @@ def test_example_config_defaults_to_dry_run(monkeypatch, tmp_path: Path) -> None
     assert settings.app.dry_run is True
     assert settings.app.preserve_existing_positions is True
     assert settings.app.ownership_state_file == ".perpmirror/position_ownership.json"
+    assert settings.followers[0].copy_leverage is False
+    assert settings.followers[0].fixed_leverage == 20
 
 
 def test_okx_leader_requires_passphrase_env(tmp_path: Path) -> None:

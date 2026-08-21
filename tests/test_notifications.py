@@ -99,3 +99,17 @@ def test_long_error_is_compacted() -> None:
     encoded = json.dumps(FeishuCardBuilder().trade(unsafe), ensure_ascii=False)
     assert "VISIBLE" not in encoded
     assert len(encoded) < 1200
+
+
+def test_fixed_card_shows_margin_times_leverage_as_notional() -> None:
+    fixed = replace(
+        event(ReconcileAction.OPEN),
+        copy_mode=CopyMode.FIXED,
+        fixed_margin=Decimal("20"),
+        leverage=Decimal("20"),
+        target_notional=Decimal("400"),
+        order_notional=Decimal("400"),
+        final_notional=Decimal("399"),
+    )
+    encoded = json.dumps(FeishuCardBuilder().trade(fixed), ensure_ascii=False)
+    assert "保证金 20.00 U × 20.00x = 400.00 U" in encoded

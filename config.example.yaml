@@ -31,8 +31,9 @@ followers:
     secret_key_env: FOLLOWER1_SECRET_KEY
     copy_mode: fixed
     fixed_margin_usdt: 20
-    copy_leverage: true
-    fixed_leverage: 5
+    # 20 U margin x 20 leverage = 400 U target notional.
+    copy_leverage: false
+    fixed_leverage: 20
     max_leverage: 20
     copy_margin_mode: true
     margin_mode: cross

@@ -130,9 +130,9 @@ leader:
 - `heartbeat_interval_seconds`: 运行心跳日志间隔，设为 `0` 可关闭。
 - `position_drift_threshold_percent` / `position_drift_min_usdt`: 防止价格微变导致频繁调仓。
 - `order_failure_cooldown_seconds`: 同一目标下单失败后的冷却时间，默认 300 秒；目标变化和减仓/平仓不受冷却影响。
-- `fixed_margin_usdt`: FIXED 模式的固定保证金。
+- `fixed_margin_usdt`: FIXED 模式的固定保证金；目标名义仓位为 `fixed_margin_usdt × 实际杠杆`。例如 20 U 保证金、20x 杠杆会下约 400 U 名义仓位。
 - `copy_ratio`: RATIO 倍率，`0.5/1/1.5` 分别表示 `50%/100%/150%`。
-- `copy_leverage`, `fixed_leverage`, `max_leverage`: 杠杆选择和上限。
+- `copy_leverage`, `fixed_leverage`, `max_leverage`: FIXED 固定杠杆时设置 `copy_leverage: false`；例如 `fixed_leverage: 20`。`max_leverage` 是硬上限。
 - `risk.*`: 单币、总仓位、单笔、开仓数量、允许做空、白名单和黑名单。
 - `kill_switch`: 禁止增加新风险；`kill_switch_close_positions` 决定是否允许机器人继续减仓/平仓。
 

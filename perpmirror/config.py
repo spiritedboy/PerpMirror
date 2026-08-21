@@ -168,7 +168,7 @@ def load_config(
                 copy_mode=mode,
                 fixed_margin_usdt=fixed_margin,
                 copy_ratio=ratio,
-                copy_leverage=bool(row.get("copy_leverage", True)),
+                copy_leverage=bool(row.get("copy_leverage", mode == CopyMode.RATIO)),
                 fixed_leverage=decimal(row.get("fixed_leverage", 5)),
                 max_leverage=decimal(row.get("max_leverage", risk_raw.get("max_leverage", 20))),
                 copy_margin_mode=bool(row.get("copy_margin_mode", True)),

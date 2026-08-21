@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import time
+import secrets
 from decimal import Decimal
 
 from perpmirror.enums import OrderSide, OrderStatus, PositionSide
@@ -22,10 +21,10 @@ class ExecutionEngine:
         self.dry_run = dry_run
 
     @staticmethod
-    def client_order_id(follower_id: str, symbol: str, action: str) -> str:
-        now = time.time_ns()
-        digest = hashlib.blake2s(f"{follower_id}|{symbol}|{action}|{now}".encode(), digest_size=6).hexdigest()
-        return f"pm_{now % 10**12}_{digest}"[:36]
+    def client_order_id(_follower_id: str, _symbol: str, action: str) -> str:
+        # OKX accepts only case-sensitive alphanumeric clOrdId values up to
+        # 32 characters. This subset is also valid for Binance newClientOrderId.
+        return f"pm{action[:1]}{secrets.token_hex(14)}"
 
     async def execute_delta(
         self,
