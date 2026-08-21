@@ -92,13 +92,19 @@ class OkxSwapClient(ExchangeClient):
                 content=body_text or None,
                 headers=headers,
                 retry=not order_submission,
+                allow_error_response=True,
             )
         except RetryableExchangeError as exc:
             if order_submission:
                 client_id = str((body or {}).get("clOrdId", "unknown"))
                 raise UnknownOrderState(client_id, "OKX order submission response was not received") from exc
             raise
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise NonRetryableExchangeError(
+                f"OKX returned non-JSON HTTP {response.status_code} during {method} {path}"
+            ) from exc
         code = str(data.get("code", "0"))
         if code != "0":
             if code == "50102" and timestamp_retry:
@@ -112,8 +118,21 @@ class OkxSwapClient(ExchangeClient):
                     order_submission=order_submission,
                     timestamp_retry=False,
                 )
-            if code in {"50103", "50104", "50105", "50113"}:
-                raise AuthenticationError(f"OKX authentication failed ({code})")
+            if code in {
+                "50103",
+                "50104",
+                "50105",
+                "50106",
+                "50107",
+                "50108",
+                "50109",
+                "50110",
+                "50111",
+                "50112",
+                "50113",
+                "50114",
+            }:
+                raise AuthenticationError(f"OKX authentication failed ({code}): {data.get('msg', '')}")
             raise NonRetryableExchangeError(f"OKX error {code}: {data.get('msg', '')}")
         return data.get("data", [])
 

@@ -30,6 +30,7 @@ class ReliableHttpClient:
         content: str | bytes | None = None,
         headers: Mapping[str, str] | None = None,
         retry: bool = True,
+        allow_error_response: bool = False,
     ) -> httpx.Response:
         attempts = self.retries if retry else 1
         last_error: Exception | None = None
@@ -49,7 +50,7 @@ class ReliableHttpClient:
                     )
                     if attempt + 1 >= attempts:
                         raise last_error
-                elif response.is_error:
+                elif response.is_error and not allow_error_response:
                     raise NonRetryableExchangeError(
                         f"exchange HTTP {response.status_code} during {method} {path}"
                     )

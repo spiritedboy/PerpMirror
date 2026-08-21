@@ -1,8 +1,10 @@
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from perpmirror.enums import MarginMode, OrderSide, PositionMode, PositionSide
+from perpmirror.exceptions import AuthenticationError
 from perpmirror.exchanges.binance import BinanceFuturesClient
 from perpmirror.exchanges.okx import OkxSwapClient
 from perpmirror.models import OrderRequest
@@ -72,6 +74,29 @@ async def test_okx_instrument_metadata_preserves_contract_units(monkeypatch) -> 
     instrument = (await client.get_instruments())["BTC-USDT-PERP"]
     assert instrument.base_per_quantity == Decimal("0.01")
     assert instrument.quantity_for_notional(Decimal("600"), Decimal("60000")) == 1
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        ("50105", "passphrase incorrect"),
+        ("50110", "Invalid IP"),
+        ("50111", "Invalid OK_ACCESS_KEY"),
+        ("50113", "Invalid signature"),
+    ],
+)
+async def test_okx_http_401_preserves_authentication_reason(monkeypatch, code, message) -> None:
+    client = OkxSwapClient("key", "secret", "pass")
+
+    async def request(method, path, **kwargs):
+        assert kwargs["allow_error_response"] is True
+        return httpx.Response(401, json={"code": code, "msg": message})
+
+    monkeypatch.setattr(client.http, "request", request)
+    with pytest.raises(AuthenticationError, match=rf"{code}.*{message}"):
+        await client.get_position_mode()
     await client.close()
 
 

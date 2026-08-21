@@ -83,6 +83,7 @@ class BinanceFuturesClient(ExchangeClient):
                     params={**values, "signature": signature},
                     headers=headers,
                     retry=not order_submission,
+                    allow_error_response=True,
                 )
             else:
                 response = await self.http.request(
@@ -91,6 +92,7 @@ class BinanceFuturesClient(ExchangeClient):
                     content=payload,
                     headers={**headers, "Content-Type": "application/x-www-form-urlencoded"},
                     retry=not order_submission,
+                    allow_error_response=True,
                 )
         except RetryableExchangeError as exc:
             if order_submission:
@@ -99,7 +101,12 @@ class BinanceFuturesClient(ExchangeClient):
                     client_id, "Binance order submission response was not received"
                 ) from exc
             raise
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise NonRetryableExchangeError(
+                f"Binance returned non-JSON HTTP {response.status_code} during {method} {path}"
+            ) from exc
         if isinstance(data, dict) and int(data.get("code", 0)) < 0:
             code = int(data["code"])
             if code == -1021 and timestamp_retry:
