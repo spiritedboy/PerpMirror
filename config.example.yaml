@@ -1,5 +1,9 @@
 app:
   dry_run: true
+  # Protect all follower positions that exist on the first live startup. Leader
+  # positions already open at that time are ignored until they become flat.
+  preserve_existing_positions: true
+  ownership_state_file: .perpmirror/position_ownership.json
   sync_on_start: true
   full_reconcile_interval_seconds: 10
   event_debounce_seconds: 0.3

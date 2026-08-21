@@ -17,6 +17,8 @@ from perpmirror.models import FollowerConfig, decimal
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     dry_run: bool = True
+    preserve_existing_positions: bool = False
+    ownership_state_file: str = ".perpmirror/position_ownership.json"
     sync_on_start: bool = True
     full_reconcile_interval_seconds: Decimal = Decimal("10")
     event_debounce_seconds: Decimal = Decimal("0.3")
@@ -101,6 +103,10 @@ def load_config(
 
     app = AppConfig(
         dry_run=True if force_dry_run else bool(app_raw.get("dry_run", True)),
+        preserve_existing_positions=bool(app_raw.get("preserve_existing_positions", False)),
+        ownership_state_file=str(
+            app_raw.get("ownership_state_file", ".perpmirror/position_ownership.json")
+        ).strip(),
         sync_on_start=bool(app_raw.get("sync_on_start", True)),
         full_reconcile_interval_seconds=decimal(app_raw.get("full_reconcile_interval_seconds", 10)),
         event_debounce_seconds=decimal(app_raw.get("event_debounce_seconds", "0.3")),
@@ -112,6 +118,10 @@ def load_config(
         position_drift_threshold_percent=decimal(app_raw.get("position_drift_threshold_percent", 1)),
         position_drift_min_usdt=decimal(app_raw.get("position_drift_min_usdt", 5)),
     )
+    if app.preserve_existing_positions and not app.ownership_state_file:
+        raise ConfigurationError(
+            "app.ownership_state_file is required when preserve_existing_positions is true"
+        )
     leader = AccountConfig(
         id=str(leader_raw.get("id", "leader")),
         exchange=Exchange(str(leader_raw["exchange"]).lower()),

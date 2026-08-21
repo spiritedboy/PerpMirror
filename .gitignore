@@ -2,6 +2,7 @@
 config.yaml
 *.log
 logs/
+.perpmirror/
 .venv/
 __pycache__/
 .pytest_cache/

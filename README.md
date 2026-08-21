@@ -123,6 +123,8 @@ leader:
 完整、安全的默认配置见 [`config.example.yaml`](config.example.yaml)。主要参数：
 
 - `app.dry_run`: 默认 `true`，禁止真实下单和杠杆/保证金模式修改。
+- `preserve_existing_positions`: 设为 `true` 时启用“只跟启动后新仓位”模式，保护启动前已有仓位。
+- `ownership_state_file`: 增量接管状态文件；LIVE 重启恢复程序仓位所有权所必需。
 - `sync_on_start`: 启动后按交易所真实快照做一次完整对账。
 - `full_reconcile_interval_seconds`: 周期全量对账间隔。
 - `heartbeat_interval_seconds`: 运行心跳日志间隔，设为 `0` 可关闭。
@@ -219,7 +221,36 @@ OKX 的 `sz` 是合约张数。系统使用 `ctVal × ctMult × markPrice` 将�
 
 按 `Ctrl+C` 或发送 `SIGTERM` 会停止新的对账触发，等待当前关键操作，取消周期任务和 WS，排空通知队列，关闭 HTTP 连接后退出。
 
-程序不保存仓位数据库。重启后第一件事是读取交易所真实仓位，所以目标已经满足时会 NOOP，不会因本地没有历史记录而重复开仓。
+默认全量对账模式不保存仓位数据库，重启后直接读取交易所真实仓位，目标已经满足时会 NOOP。启用 `preserve_existing_positions` 后只额外保存币种所有权，不保存 API Key、成交记录或仓位数量。
+
+### 只跟启动后的新仓位
+
+需要在同一个 Follower 账户保留人工/历史仓位时，启用：
+
+```yaml
+app:
+  preserve_existing_positions: true
+  ownership_state_file: .perpmirror/position_ownership.json
+```
+
+该模式使用“币种所有权”隔离，而不是把人工仓位和程序仓位的数量混在一起计算：
+
+- 第一次 LIVE 启动时，Follower 已持有的币种登记为 `protected`，程序不会加、减、平或反手这些币种。
+- 第一次 LIVE 启动时，Leader 已持有的币种登记为 `blocked`。该仓位后续加减仓仍忽略；程序观察到它完全平仓后，下一次重新开仓才开始跟随。
+- Leader 在程序启动后新开的、且 Follower 没有受保护仓位的币种会登记为 `managed`，后续加仓、减仓、平仓和反手均由程序负责。
+- 程序管理的仓位完全平仓后释放币种；之后新的 Leader 开仓仍可再次接管。
+- 程序运行期间发现新的非托管 Follower 仓位时，会将该币种加入保护列表并跳过。
+
+交易所只提供按账户/币种聚合后的仓位，无法识别其中哪一部分来自人工下单。因此，不要在程序已经管理的同一币种上手工交易；如果 Follower 已有受保护的 BTC 仓位，程序将跳过 BTC 跟单。要让人工仓位和跟单仓位在同一币种同时存在，必须使用独立子账户。
+
+LIVE 模式会把所有权状态原子写入 `ownership_state_file`。重启后程序读取该文件，继续管理自己创建的仓位，不会把它们误判为历史仓位。必须注意：
+
+- 不要在程序仓位未平时删除或手工修改状态文件。
+- 不要让多个 PerpMirror 进程共享同一个状态文件或同一 Follower 账户。
+- 更换 Leader、Follower ID 或交易所后，旧状态会因账户身份不匹配而拒绝启动；确认所有程序仓位已处理后，再由账户所有者归档旧状态并重新初始化。
+- `--dry-run` 可以读取已有状态用于预演，但不会创建或修改状态文件。
+
+首次启用后日志应出现 `OWNERSHIP_STATE_CREATED`、`LEADER_POSITION_BLOCKED` 和 `FOLLOWER_POSITION_PROTECTED`。此时不应有真实订单；服务必须持续运行，等待 Leader 之后的新开仓事件。后续重启应出现 `OWNERSHIP_STATE_LOADED`。
 
 ## 测试与质量检查
 
@@ -231,13 +262,13 @@ mypy perpmirror
 python -m compileall -q perpmirror
 ```
 
-测试覆盖 FIXED/RATIO、开加减平、双向反手、幂等、重启等价状态、漂移阈值、风控、DRY_RUN、部分成交、HTTP 超时但已成交、符号映射、Binance 数量截断、OKX 合约张数、WS pending tick 和飞书 JSON/Secret 脱敏。
+测试覆盖 FIXED/RATIO、开加减平、双向反手、幂等、重启等价状态、启动仓位保护、所有权持久化、漂移阈值、风控、DRY_RUN、部分成交、HTTP 超时但已成交、符号映射、Binance 数量截断、OKX 合约张数、WS pending tick 和飞书 JSON/Secret 脱敏。
 
 ## LIVE 前检查清单
 
 只有账户所有者明确决定启用真实交易时才进行以下操作：
 
-1. 使用专用 Follower 子账户，清理人工仓位和挂单。
+1. 优先使用专用 Follower 子账户；如果必须保留历史仓位，启用 `preserve_existing_positions`，并确认同币种不会同时由人工和程序交易。清理可能触发额外成交的旧挂单。
 2. 核对 Leader/Follower API 权限、IP 白名单，确认没有提现权限。
 3. 先运行 `--check-config`，再长时间运行 `--dry-run` 并核对每个目标和数量。
 4. 核对 Binance Position Mode、OKX account/position mode、cross/isolated 和每个标的杠杆。

@@ -20,6 +20,8 @@ def test_example_config_defaults_to_dry_run(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setenv("FOLLOWER2_PASSPHRASE", "x")
     settings = load_config(config, tmp_path / ".env")
     assert settings.app.dry_run is True
+    assert settings.app.preserve_existing_positions is True
+    assert settings.app.ownership_state_file == ".perpmirror/position_ownership.json"
 
 
 def test_okx_leader_requires_passphrase_env(tmp_path: Path) -> None:
@@ -46,3 +48,14 @@ def test_cli_force_dry_run_overrides_live_before_gate(monkeypatch, tmp_path: Pat
     monkeypatch.delenv("PERPMIRROR_LIVE_ACK", raising=False)
     settings = load_config(config, tmp_path / ".env", force_dry_run=True)
     assert settings.app.dry_run is True
+
+
+def test_preserve_existing_requires_state_file(tmp_path: Path) -> None:
+    source = Path("config.example.yaml").read_text().replace(
+        "ownership_state_file: .perpmirror/position_ownership.json",
+        'ownership_state_file: ""',
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(source)
+    with pytest.raises(ConfigurationError, match="ownership_state_file"):
+        load_config(config, tmp_path / ".env")

@@ -14,6 +14,7 @@ from perpmirror.exchanges import BinanceFuturesClient, ExchangeClient, OkxSwapCl
 from perpmirror.execution.executor import ExecutionEngine
 from perpmirror.models import ZERO, FollowerTarget, ReconcileResult, TradeNotification
 from perpmirror.monitoring.coalescer import ReconcileCoalescer
+from perpmirror.monitoring.ownership import PositionOwnership
 from perpmirror.notifications.base import NullNotifier
 from perpmirror.notifications.cards import FeishuCardBuilder
 from perpmirror.notifications.feishu import FeishuNotifier
@@ -71,6 +72,23 @@ class PerpMirrorApp:
         self._stop = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
         self._full_reconcile_lock = asyncio.Lock()
+        self.ownership = (
+            PositionOwnership(
+                settings.app.ownership_state_file,
+                identity={
+                    "leader": {
+                        "id": settings.leader.id,
+                        "exchange": settings.leader.exchange.value,
+                    },
+                    "followers": {
+                        follower.id: follower.exchange.value for follower in settings.followers
+                    },
+                },
+                persist_changes=not settings.app.dry_run,
+            )
+            if settings.app.preserve_existing_positions
+            else None
+        )
 
     @staticmethod
     def _client(exchange: Exchange, api_key: str, secret: str, passphrase: str) -> ExchangeClient:
@@ -122,20 +140,39 @@ class PerpMirrorApp:
                 equity,
             )
 
+    async def initialize_position_ownership(self) -> None:
+        if self.ownership is None:
+            return
+        leader_positions = await self.leader.get_positions()
+        follower_positions = {
+            follower.id: set(await self.followers[follower.id].get_positions())
+            for follower in self.settings.followers
+        }
+        self.ownership.initialize(set(leader_positions), follower_positions)
+
     async def full_reconcile(self) -> list[ReconcileResult]:
         if self._stop.is_set():
             return []
         async with self._full_reconcile_lock:
             leader_equity = await self.leader.get_equity()
             leader_positions = await self.leader.get_positions()
+            if self.ownership is not None:
+                self.ownership.observe_leader(set(leader_positions))
             results: list[ReconcileResult] = []
             for follower_config in self.settings.followers:
                 client = self.followers[follower_config.id]
                 follower_equity = await client.get_equity()
                 follower_positions = await client.get_positions()
-                symbols = set(leader_positions) | set(follower_positions)
+                if self.ownership is None:
+                    symbols = set(leader_positions) | set(follower_positions)
+                else:
+                    self.ownership.protect_unmanaged(follower_config.id, set(follower_positions))
+                    symbols = self.ownership.candidate_symbols(
+                        follower_config.id, set(leader_positions)
+                    )
                 coroutines = []
                 targets = []
+                target_symbols = []
                 for symbol in sorted(symbols):
                     leader_position = leader_positions.get(symbol)
                     if leader_position is not None and not self.mapper.supported(client.exchange, symbol):
@@ -146,6 +183,13 @@ class PerpMirrorApp:
                             symbol,
                         )
                         continue
+                    if (
+                        self.ownership is not None
+                        and not self.ownership.is_managed(follower_config.id, symbol)
+                    ):
+                        if leader_position is None:
+                            continue
+                        self.ownership.claim(follower_config.id, symbol)
                     target = self.calculator.calculate(
                         follower_config,
                         leader_position,
@@ -154,13 +198,23 @@ class PerpMirrorApp:
                         symbol,
                     )
                     targets.append(target)
+                    target_symbols.append(symbol)
                     coroutines.append(self.reconciler.reconcile(client, target))
                 if not coroutines:
                     continue
                 follower_results = await asyncio.gather(*coroutines)
                 results.extend(follower_results)
-                for target, result in zip(targets, follower_results, strict=True):
+                for symbol, target, result in zip(
+                    target_symbols, targets, follower_results, strict=True
+                ):
                     self._log_result(result)
+                    if (
+                        self.ownership is not None
+                        and leader_positions.get(symbol) is None
+                        and result.success
+                        and result.final_notional == ZERO
+                    ):
+                        self.ownership.release(follower_config.id, symbol)
                     if result.action != ReconcileAction.NOOP:
                         self.notifications.publish(
                             self.cards.trade(
@@ -272,6 +326,7 @@ class PerpMirrorApp:
         await self.startup_checks()
         if check_only:
             return
+        await self.initialize_position_ownership()
         await self.send_startup_card()
         if self.settings.app.sync_on_start or once:
             await self.full_reconcile()
