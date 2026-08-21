@@ -194,7 +194,21 @@ class PerpMirrorApp:
                 if self.ownership is None:
                     symbols = set(leader_positions) | set(follower_positions)
                 else:
-                    self.ownership.protect_unmanaged(follower_config.id, set(follower_positions))
+                    follower_symbols = set(follower_positions)
+                    suspended = self.ownership.observe_follower_positions(
+                        follower_config.id,
+                        follower_symbols,
+                        set(leader_positions),
+                    )
+                    for symbol in sorted(suspended):
+                        self.notifications.publish(
+                            self.cards.copy_suspended(
+                                follower_id=follower_config.id,
+                                exchange=client.exchange.value,
+                                symbol=symbol,
+                            )
+                        )
+                    self.ownership.protect_unmanaged(follower_config.id, follower_symbols)
                     symbols = self.ownership.candidate_symbols(
                         follower_config.id, set(leader_positions)
                     )
@@ -255,6 +269,12 @@ class PerpMirrorApp:
                     target_symbols, targets, follower_results, strict=True
                 ):
                     self._log_result(result)
+                    if (
+                        self.ownership is not None
+                        and result.final_notional is not None
+                        and result.final_notional > ZERO
+                    ):
+                        self.ownership.mark_position_observed(follower_config.id, symbol)
                     if (
                         self.ownership is not None
                         and leader_positions.get(symbol) is None

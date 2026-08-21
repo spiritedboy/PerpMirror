@@ -91,6 +91,7 @@ async def test_app_preserves_existing_and_manages_only_new_position(
     leader._positions["BTC-USDT-PERP"] = make_position("100", symbol="BTC-USDT-PERP")
     opened = await app.full_reconcile()
     assert len(opened) == 1
+    assert app.notifications.queue.qsize() == 1
     assert (await follower.get_position("BTC-USDT-PERP")).abs_notional == Decimal("20")
     assert (await follower.get_position("ETH-USDT-PERP")).abs_notional == Decimal("50")
 
@@ -110,6 +111,67 @@ async def test_app_preserves_existing_and_manages_only_new_position(
     leader._positions.pop("BTC-USDT-PERP")
     closed = await app.full_reconcile()
     assert len(closed) == 1
+    assert app.notifications.queue.qsize() == 1
     assert await follower.get_position("BTC-USDT-PERP") is None
     assert (await follower.get_position("ETH-USDT-PERP")).abs_notional == Decimal("50")
     assert len(follower.orders) == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_follower_close_suspends_copy_until_leader_reopens(
+    monkeypatch, tmp_path: Path, instrument
+) -> None:
+    leader = FakeExchangeClient(instruments=[instrument])
+    follower = FakeExchangeClient(instruments=[instrument])
+    clients = iter((leader, follower))
+    monkeypatch.setattr(
+        PerpMirrorApp,
+        "_client",
+        staticmethod(lambda exchange, api_key, secret, passphrase: next(clients)),
+    )
+    monkeypatch.setenv("LEADER_KEY", "x")
+    monkeypatch.setenv("LEADER_SECRET", "x")
+    monkeypatch.setenv("FOLLOWER_KEY", "x")
+    monkeypatch.setenv("FOLLOWER_SECRET", "x")
+    state_path = tmp_path / "ownership.json"
+    app = PerpMirrorApp(incremental_settings(state_path))
+    app.mapper.add_instruments(Exchange.FAKE, await follower.get_instruments())
+    await app.initialize_position_ownership()
+
+    leader._positions["BTC-USDT-PERP"] = make_position("100")
+    opened = await app.full_reconcile()
+    assert len(opened) == 1
+    assert len(follower.orders) == 1
+    assert app.notifications.queue.qsize() == 1
+
+    # The follower owner manually exits while the leader leg remains open.
+    follower._positions.pop("BTC-USDT-PERP")
+    assert await app.full_reconcile() == []
+    assert app.notifications.queue.qsize() == 2
+    assert await app.full_reconcile() == []
+    assert app.notifications.queue.qsize() == 2
+    assert len(follower.orders) == 1
+    assert app.ownership is not None
+    assert app.ownership.is_suspended("follower1", "BTC-USDT-PERP")
+
+    # Suspension must survive a service restart.
+    restarted_clients = iter((leader, follower))
+    monkeypatch.setattr(
+        PerpMirrorApp,
+        "_client",
+        staticmethod(lambda exchange, api_key, secret, passphrase: next(restarted_clients)),
+    )
+    restarted = PerpMirrorApp(incremental_settings(state_path))
+    restarted.mapper.add_instruments(Exchange.FAKE, await follower.get_instruments())
+    await restarted.initialize_position_ownership()
+    assert await restarted.full_reconcile() == []
+    assert len(follower.orders) == 1
+
+    # Leader flat releases only this copy cycle; a later new leader position is eligible.
+    leader._positions.pop("BTC-USDT-PERP")
+    assert await restarted.full_reconcile() == []
+    leader._positions["BTC-USDT-PERP"] = make_position("100")
+    reopened = await restarted.full_reconcile()
+    assert len(reopened) == 1
+    assert len(follower.orders) == 2
+    assert await follower.get_position("BTC-USDT-PERP") is not None

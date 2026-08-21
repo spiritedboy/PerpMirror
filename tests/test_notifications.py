@@ -113,3 +113,15 @@ def test_fixed_card_shows_margin_times_leverage_as_notional() -> None:
     )
     encoded = json.dumps(FeishuCardBuilder().trade(fixed), ensure_ascii=False)
     assert "保证金 20.00 U × 20.00x = 400.00 U" in encoded
+
+
+def test_manual_close_suspension_card_is_compact() -> None:
+    card = FeishuCardBuilder.copy_suspended(
+        follower_id="okx_fixed",
+        exchange="okx",
+        symbol="BTC-USDT-PERP",
+    )
+    encoded = json.dumps(card, ensure_ascii=False)
+    assert "跟单暂停" in encoded
+    assert "本轮不再补仓" in encoded
+    assert "Leader 平仓后自动解除" in encoded

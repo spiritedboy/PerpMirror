@@ -117,3 +117,25 @@ class FeishuCardBuilder:
                 "elements": [{"tag": "markdown", "content": content}],
             },
         }
+
+    @staticmethod
+    def copy_suspended(*, follower_id: str, exchange: str, symbol: str) -> dict[str, Any]:
+        content = (
+            f"**{follower_id}** · {exchange.upper()}\n"
+            "检测到 Follower 仓位已在程序外平仓或消失\n"
+            "本轮不再补仓 · Leader 平仓后自动解除"
+        )
+        return {
+            "schema": "2.0",
+            "config": {"update_multi": True},
+            "header": {
+                "template": "orange",
+                "title": {"tag": "plain_text", "content": f"⏸ 跟单暂停 · {symbol}"},
+                "padding": "12px 12px 12px 12px",
+            },
+            "body": {
+                "direction": "vertical",
+                "padding": "12px 12px 12px 12px",
+                "elements": [{"tag": "markdown", "content": content}],
+            },
+        }

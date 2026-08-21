@@ -10,13 +10,15 @@ from perpmirror.exceptions import ConfigurationError, UnsafeOperation
 
 logger = logging.getLogger(__name__)
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 @dataclass(slots=True)
 class FollowerOwnership:
     protected_symbols: set[str] = field(default_factory=set)
     managed_symbols: set[str] = field(default_factory=set)
+    observed_managed_symbols: set[str] = field(default_factory=set)
+    suspended_symbols: set[str] = field(default_factory=set)
 
 
 class PositionOwnership:
@@ -40,6 +42,7 @@ class PositionOwnership:
         self.blocked_leader_symbols: set[str] = set()
         self.followers: dict[str, FollowerOwnership] = {}
         self.initialized = False
+        self._loaded_version = STATE_VERSION
 
     def initialize(
         self,
@@ -84,23 +87,89 @@ class PositionOwnership:
                     )
         self._validate_follower_ids(follower_symbols)
         self.initialized = True
+        if self._loaded_version < STATE_VERSION:
+            self._save()
+            logger.info(
+                "OWNERSHIP_STATE_MIGRATED path=%s from_version=%s to_version=%s",
+                self.path,
+                self._loaded_version,
+                STATE_VERSION,
+            )
+            self._loaded_version = STATE_VERSION
         for follower_id, symbols in follower_symbols.items():
             self.protect_unmanaged(follower_id, symbols)
 
     def observe_leader(self, current_symbols: set[str]) -> set[str]:
         self._require_initialized()
         released = self.blocked_leader_symbols - current_symbols
+        resumed: list[tuple[str, str]] = []
         if released:
             self.blocked_leader_symbols.difference_update(released)
-            self._save()
             for symbol in sorted(released):
                 logger.info("LEADER_BASELINE_RELEASED symbol=%s eligible_on_next_open=true", symbol)
+        for follower_id, ownership in self.followers.items():
+            follower_resumed = ownership.suspended_symbols - current_symbols
+            if follower_resumed:
+                ownership.suspended_symbols.difference_update(follower_resumed)
+                resumed.extend((follower_id, symbol) for symbol in sorted(follower_resumed))
+        if released or resumed:
+            self._save()
+        for follower_id, symbol in resumed:
+            logger.info(
+                "FOLLOWER_COPY_RESUMED follower=%s symbol=%s reason=leader_flat "
+                "eligible_on_next_open=true",
+                follower_id,
+                symbol,
+            )
         return released
+
+    def observe_follower_positions(
+        self,
+        follower_id: str,
+        current_symbols: set[str],
+        leader_symbols: set[str],
+    ) -> set[str]:
+        """Suspend a managed symbol that disappears while its leader leg is still open."""
+        self._require_initialized()
+        ownership = self._follower(follower_id)
+        newly_observed = (ownership.managed_symbols & current_symbols) - (
+            ownership.observed_managed_symbols
+        )
+        disappeared = ownership.observed_managed_symbols - current_symbols
+        suspended = disappeared & leader_symbols
+        if newly_observed:
+            ownership.observed_managed_symbols.update(newly_observed)
+        if suspended:
+            ownership.managed_symbols.difference_update(suspended)
+            ownership.observed_managed_symbols.difference_update(suspended)
+            ownership.suspended_symbols.update(suspended)
+        if newly_observed or suspended:
+            self._save()
+        for symbol in sorted(suspended):
+            logger.warning(
+                "FOLLOWER_POSITION_DISAPPEARED follower=%s symbol=%s "
+                "action=suspend_until_leader_flat",
+                follower_id,
+                symbol,
+            )
+        return suspended
+
+    def mark_position_observed(self, follower_id: str, symbol: str) -> None:
+        self._require_initialized()
+        ownership = self._follower(follower_id)
+        if symbol in ownership.managed_symbols and symbol not in ownership.observed_managed_symbols:
+            ownership.observed_managed_symbols.add(symbol)
+            self._save()
 
     def protect_unmanaged(self, follower_id: str, current_symbols: set[str]) -> set[str]:
         self._require_initialized()
         ownership = self._follower(follower_id)
-        discovered = current_symbols - ownership.managed_symbols - ownership.protected_symbols
+        discovered = (
+            current_symbols
+            - ownership.managed_symbols
+            - ownership.protected_symbols
+            - ownership.suspended_symbols
+        )
         if discovered:
             ownership.protected_symbols.update(discovered)
             self._save()
@@ -116,7 +185,9 @@ class PositionOwnership:
         self._require_initialized()
         ownership = self._follower(follower_id)
         eligible_leader = leader_symbols - self.blocked_leader_symbols
-        return ownership.managed_symbols | (eligible_leader - ownership.protected_symbols)
+        return ownership.managed_symbols | (
+            eligible_leader - ownership.protected_symbols - ownership.suspended_symbols
+        )
 
     def is_managed(self, follower_id: str, symbol: str) -> bool:
         self._require_initialized()
@@ -126,11 +197,19 @@ class PositionOwnership:
         self._require_initialized()
         return symbol in self._follower(follower_id).protected_symbols
 
+    def is_suspended(self, follower_id: str, symbol: str) -> bool:
+        self._require_initialized()
+        return symbol in self._follower(follower_id).suspended_symbols
+
     def claim(self, follower_id: str, symbol: str) -> None:
         self._require_initialized()
         ownership = self._follower(follower_id)
         if symbol in ownership.protected_symbols:
             raise UnsafeOperation(f"cannot manage protected follower position: {follower_id} {symbol}")
+        if symbol in ownership.suspended_symbols:
+            raise UnsafeOperation(
+                f"cannot manage follower position suspended until leader flat: {follower_id} {symbol}"
+            )
         if symbol in self.blocked_leader_symbols:
             raise UnsafeOperation(f"cannot manage leader startup position before flat: {symbol}")
         if symbol not in ownership.managed_symbols:
@@ -143,14 +222,16 @@ class PositionOwnership:
         ownership = self._follower(follower_id)
         if symbol in ownership.managed_symbols:
             ownership.managed_symbols.remove(symbol)
+            ownership.observed_managed_symbols.discard(symbol)
             self._save()
             logger.info("FOLLOWER_SYMBOL_RELEASED follower=%s symbol=%s", follower_id, symbol)
 
     def _load(self) -> None:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
+            if not isinstance(raw, dict) or raw.get("version") not in {1, STATE_VERSION}:
                 raise ValueError("unsupported state version")
+            version = int(raw["version"])
             if raw.get("identity") != self.identity:
                 raise ConfigurationError(
                     f"ownership state identity does not match current accounts: {self.path}"
@@ -165,16 +246,36 @@ class PositionOwnership:
                     raise ValueError("invalid follower ownership entry")
                 protected = self._string_set(value.get("protected_symbols"), "protected_symbols")
                 managed = self._string_set(value.get("managed_symbols"), "managed_symbols")
+                if version == 1:
+                    # A v1 managed symbol may have been live before the upgrade.
+                    # Treat it as observed so a position missing during downtime
+                    # is never reopened without an intervening leader flat state.
+                    observed = set(managed)
+                    suspended: set[str] = set()
+                else:
+                    observed = self._string_set(
+                        value.get("observed_managed_symbols"), "observed_managed_symbols"
+                    )
+                    suspended = self._string_set(
+                        value.get("suspended_symbols"), "suspended_symbols"
+                    )
                 overlap = protected & managed
-                if overlap:
-                    raise ValueError(f"symbols cannot be protected and managed: {sorted(overlap)}")
-                followers[follower_id] = FollowerOwnership(protected, managed)
+                suspended_overlap = suspended & (protected | managed)
+                if overlap or suspended_overlap or not observed <= managed:
+                    raise ValueError(f"invalid follower symbol ownership: {follower_id}")
+                followers[follower_id] = FollowerOwnership(
+                    protected,
+                    managed,
+                    observed,
+                    suspended,
+                )
         except ConfigurationError:
             raise
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ConfigurationError(f"invalid ownership state file {self.path}: {exc}") from exc
         self.blocked_leader_symbols = blocked
         self.followers = followers
+        self._loaded_version = version
 
     def _save(self) -> None:
         if not self.persist_changes:
@@ -187,6 +288,8 @@ class PositionOwnership:
                 follower_id: {
                     "protected_symbols": sorted(ownership.protected_symbols),
                     "managed_symbols": sorted(ownership.managed_symbols),
+                    "observed_managed_symbols": sorted(ownership.observed_managed_symbols),
+                    "suspended_symbols": sorted(ownership.suspended_symbols),
                 }
                 for follower_id, ownership in sorted(self.followers.items())
             },

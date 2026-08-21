@@ -78,6 +78,77 @@ def test_release_allows_future_cycle_or_manual_protection(tmp_path: Path) -> Non
     assert state.is_protected("okx_fixed", "BTC-USDT-PERP")
 
 
+def test_manually_closed_managed_position_waits_for_leader_flat(tmp_path: Path) -> None:
+    path = tmp_path / "ownership.json"
+    state = ownership(path)
+    state.initialize(set(), {"okx_fixed": set()})
+    state.claim("okx_fixed", "BTC-USDT-PERP")
+    state.mark_position_observed("okx_fixed", "BTC-USDT-PERP")
+
+    suspended = state.observe_follower_positions(
+        "okx_fixed", set(), {"BTC-USDT-PERP"}
+    )
+
+    assert suspended == {"BTC-USDT-PERP"}
+    assert state.is_suspended("okx_fixed", "BTC-USDT-PERP")
+    assert not state.is_managed("okx_fixed", "BTC-USDT-PERP")
+    assert state.candidate_symbols("okx_fixed", {"BTC-USDT-PERP"}) == set()
+
+    restarted = ownership(path)
+    restarted.initialize({"BTC-USDT-PERP"}, {"okx_fixed": set()})
+    assert restarted.is_suspended("okx_fixed", "BTC-USDT-PERP")
+    assert restarted.candidate_symbols("okx_fixed", {"BTC-USDT-PERP"}) == set()
+
+    restarted.observe_leader(set())
+    assert not restarted.is_suspended("okx_fixed", "BTC-USDT-PERP")
+    assert restarted.candidate_symbols("okx_fixed", {"BTC-USDT-PERP"}) == {
+        "BTC-USDT-PERP"
+    }
+
+
+def test_unfilled_claim_is_not_mistaken_for_manual_close(tmp_path: Path) -> None:
+    state = ownership(tmp_path / "ownership.json")
+    state.initialize(set(), {"okx_fixed": set()})
+    state.claim("okx_fixed", "BTC-USDT-PERP")
+
+    suspended = state.observe_follower_positions(
+        "okx_fixed", set(), {"BTC-USDT-PERP"}
+    )
+
+    assert suspended == set()
+    assert state.is_managed("okx_fixed", "BTC-USDT-PERP")
+    assert state.candidate_symbols("okx_fixed", {"BTC-USDT-PERP"}) == {
+        "BTC-USDT-PERP"
+    }
+
+
+def test_version_one_state_migrates_without_reopening_missing_position(tmp_path: Path) -> None:
+    path = tmp_path / "ownership.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "identity": IDENTITY,
+                "blocked_leader_symbols": [],
+                "followers": {
+                    "okx_fixed": {
+                        "protected_symbols": [],
+                        "managed_symbols": ["BTC-USDT-PERP"],
+                    }
+                },
+            }
+        )
+    )
+    state = ownership(path)
+    state.initialize({"BTC-USDT-PERP"}, {"okx_fixed": set()})
+
+    assert json.loads(path.read_text())["version"] == 2
+    assert state.observe_follower_positions(
+        "okx_fixed", set(), {"BTC-USDT-PERP"}
+    ) == {"BTC-USDT-PERP"}
+    assert state.is_suspended("okx_fixed", "BTC-USDT-PERP")
+
+
 def test_dry_run_never_creates_or_updates_state_file(tmp_path: Path) -> None:
     path = tmp_path / "ownership.json"
     state = ownership(path, persist=False)
