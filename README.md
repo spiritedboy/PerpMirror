@@ -195,7 +195,7 @@ python scripts/check_okx_api.py          # Production Key
 
 ## 飞书通知
 
-使用群自定义机器人的 Interactive Message Card，不发送简单文本。OPEN、ADD、REDUCE、CLOSE、FLIP、失败和风控卡片由统一事件模型渲染；DRY_RUN 卡片有明显黄色模拟标记。通知经过有界 `asyncio.Queue`，最多重试三次并指数退避，永久失败会丢弃并记录错误，绝不会阻塞交易或 WS。
+使用简洁的 Interactive Message Card：标题显示开仓、加仓、减仓、平仓、反手、失败或风控动作，正文只保留账户、方向、前后仓位、目标、本次订单、杠杆和时间；权益、敞口比例、订单号等详细信息留在日志中。DRY_RUN 卡片有明显黄色模拟标记。通知经过有界 `asyncio.Queue`，最多重试三次并指数退避，永久失败会丢弃并记录错误，绝不会阻塞交易或 WS。
 
 配置群机器人 Webhook 和可选签名 Secret 后：
 

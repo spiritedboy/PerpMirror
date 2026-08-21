@@ -46,6 +46,13 @@ def test_all_trade_and_failure_cards_are_valid_json() -> None:
         assert card["schema"] == "2.0"
         assert "header" in card and "elements" in card["body"]
         assert "BTC-USDT-PERP" in encoded
+        assert "okx_ratio" in encoded
+        assert "多 · 0.00 U" in encoded
+        assert "目标 600.00 U" in encoded
+        assert "Order ID" not in encoded
+        assert "Leader Equity" not in encoded
+        assert "Follower Equity" not in encoded
+        assert "Realized PnL" not in encoded
 
 
 def test_error_card_redacts_secrets() -> None:
@@ -67,4 +74,28 @@ def test_startup_card_marks_dry_run() -> None:
         reconcile_interval=Decimal("10"),
     )
     assert card["schema"] == "2.0"
-    assert "DRY RUN" in json.dumps(card, ensure_ascii=False)
+    encoded = json.dumps(card, ensure_ascii=False)
+    assert "DRY RUN" in encoded
+    assert "Leader · BINANCE · 1 仓" in encoded
+    assert "f1 · OKX/FIXED · 0 仓" in encoded
+    assert "Equity" not in encoded
+    assert "WebSocket State" not in encoded
+
+
+def test_dry_run_uses_target_as_compact_preview() -> None:
+    encoded = json.dumps(
+        FeishuCardBuilder().trade(event(ReconcileAction.OPEN), dry_run=True),
+        ensure_ascii=False,
+    )
+    assert "模拟开仓" in encoded
+    assert "0.00 U → 600.00 U" in encoded
+
+
+def test_long_error_is_compacted() -> None:
+    unsafe = replace(
+        event(ReconcileAction.ORDER_FAILED),
+        error_message="api_key=VISIBLE\n" + "failure " * 100,
+    )
+    encoded = json.dumps(FeishuCardBuilder().trade(unsafe), ensure_ascii=False)
+    assert "VISIBLE" not in encoded
+    assert len(encoded) < 1200
