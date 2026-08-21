@@ -20,10 +20,10 @@ class SecretRedactionFilter(logging.Filter):
         return text
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = self.redact(record.msg)
-        record.args = (
-            tuple(self.redact(arg) for arg in record.args) if isinstance(record.args, tuple) else record.args
-        )
+        # Render with the original argument types first. Converting every argument to
+        # str breaks third-party format strings such as httpx's HTTP status `%d`.
+        record.msg = self.redact(record.getMessage())
+        record.args = ()
         return True
 
 

@@ -52,9 +52,11 @@ async def test_okx_instrument_metadata_preserves_contract_units(monkeypatch) -> 
         return [
             {
                 "instId": "BTC-USDT-SWAP",
-                "baseCcy": "BTC",
-                "quoteCcy": "USDT",
+                "instType": "SWAP",
+                "baseCcy": "",
+                "quoteCcy": "",
                 "settleCcy": "USDT",
+                "ctValCcy": "BTC",
                 "ctType": "linear",
                 "ctVal": "0.01",
                 "ctMult": "1",

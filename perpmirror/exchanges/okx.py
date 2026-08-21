@@ -147,11 +147,15 @@ class OkxSwapClient(ExchangeClient):
             return dict(self._instruments)
         rows = await self._request("GET", "/api/v5/public/instruments", {"instType": "SWAP"})
         for row in rows:
-            if row.get("settleCcy") != "USDT" or row.get("quoteCcy") != "USDT":
+            if row.get("instType") != "SWAP" or row.get("settleCcy") != "USDT":
                 continue
             if row.get("ctType") != "linear":
                 continue
-            base = str(row["baseCcy"])
+            # For OKX derivatives baseCcy/quoteCcy are empty. ctValCcy is the
+            # authoritative base unit of one linear contract (for example BTC).
+            base = str(row.get("ctValCcy", "")).strip()
+            if not base or base == "USDT":
+                continue
             normalized = f"{base}-USDT-PERP"
             item = InstrumentInfo(
                 exchange=self.exchange,
