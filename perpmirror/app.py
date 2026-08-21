@@ -55,6 +55,7 @@ class PerpMirrorApp:
             max_retries=settings.app.max_reconcile_retries,
             retry_base_delay=settings.app.retry_base_delay_seconds,
             max_concurrent_orders=settings.app.max_concurrent_orders,
+            failure_cooldown=settings.app.order_failure_cooldown_seconds,
         )
         notifier = (
             FeishuNotifier(
@@ -215,7 +216,10 @@ class PerpMirrorApp:
                         and result.final_notional == ZERO
                     ):
                         self.ownership.release(follower_config.id, symbol)
-                    if result.action != ReconcileAction.NOOP:
+                    if (
+                        result.action != ReconcileAction.NOOP
+                        and not result.notification_suppressed
+                    ):
                         self.notifications.publish(
                             self.cards.trade(
                                 self._notification(target, result), dry_run=self.settings.app.dry_run

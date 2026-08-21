@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
+from perpmirror.exceptions import RetryableExchangeError
 from perpmirror.notifications.base import Notifier
 
 logger = logging.getLogger(__name__)
@@ -15,12 +16,15 @@ class NotificationWorker:
         self.max_retries = max_retries
         self.queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=queue_size)
         self._task: asyncio.Task[None] | None = None
+        self._disabled = False
 
     def start(self) -> None:
         if self._task is None:
             self._task = asyncio.create_task(self._run(), name="notification-worker")
 
     def publish(self, card: dict[str, Any]) -> None:
+        if self._disabled:
+            return
         try:
             self.queue.put_nowait(card)
         except asyncio.QueueFull:
@@ -32,15 +36,21 @@ class NotificationWorker:
             try:
                 if card is None:
                     return
+                if self._disabled:
+                    continue
                 for attempt in range(self.max_retries):
                     try:
                         await self.notifier.send_card(card)
                         break
-                    except Exception as exc:
+                    except RetryableExchangeError as exc:
                         if attempt + 1 >= self.max_retries:
                             logger.error("notification_delivery_failed error=%s", exc)
                             break
                         await asyncio.sleep(float(2**attempt))
+                    except Exception as exc:
+                        self._disabled = True
+                        logger.error("notification_disabled permanent_error=true error=%s", exc)
+                        break
             finally:
                 self.queue.task_done()
 

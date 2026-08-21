@@ -137,8 +137,25 @@ class OkxSwapClient(ExchangeClient):
                 "50114",
             }:
                 raise AuthenticationError(f"OKX authentication failed ({code}): {data.get('msg', '')}")
-            raise NonRetryableExchangeError(f"OKX error {code}: {data.get('msg', '')}")
+            raise NonRetryableExchangeError(f"OKX error {code}: {self._error_detail(data)}")
         return data.get("data", [])
+
+    @staticmethod
+    def _error_detail(payload: dict[str, Any]) -> str:
+        summary = str(payload.get("msg", "operation failed")).strip() or "operation failed"
+        rows = payload.get("data")
+        details: list[str] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                item_code = str(row.get("sCode", "")).strip()
+                item_message = str(row.get("sMsg", "")).strip()
+                if item_code and item_code != "0":
+                    details.append(f"{item_code}: {item_message or 'operation failed'}")
+                if len(details) >= 3:
+                    break
+        return f"{summary}; item error(s): {'; '.join(details)}" if details else summary
 
     def _sign(self, prehash: str) -> str:
         digest = hmac.new(self._secret_key, prehash.encode(), hashlib.sha256).digest()

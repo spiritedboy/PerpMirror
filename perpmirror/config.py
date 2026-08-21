@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from perpmirror.enums import CopyMode, Exchange, MarginMode
 from perpmirror.exceptions import ConfigurationError
-from perpmirror.models import FollowerConfig, decimal
+from perpmirror.models import ZERO, FollowerConfig, decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +27,7 @@ class AppConfig:
     max_concurrent_orders: int = 5
     max_reconcile_retries: int = 3
     retry_base_delay_seconds: Decimal = Decimal("0.5")
+    order_failure_cooldown_seconds: Decimal = Decimal("300")
     position_drift_threshold_percent: Decimal = Decimal("1")
     position_drift_min_usdt: Decimal = Decimal("5")
 
@@ -115,6 +116,9 @@ def load_config(
         max_concurrent_orders=int(app_raw.get("max_concurrent_orders", 5)),
         max_reconcile_retries=int(app_raw.get("max_reconcile_retries", 3)),
         retry_base_delay_seconds=decimal(app_raw.get("retry_base_delay_seconds", "0.5")),
+        order_failure_cooldown_seconds=decimal(
+            app_raw.get("order_failure_cooldown_seconds", 300)
+        ),
         position_drift_threshold_percent=decimal(app_raw.get("position_drift_threshold_percent", 1)),
         position_drift_min_usdt=decimal(app_raw.get("position_drift_min_usdt", 5)),
     )
@@ -122,6 +126,8 @@ def load_config(
         raise ConfigurationError(
             "app.ownership_state_file is required when preserve_existing_positions is true"
         )
+    if app.order_failure_cooldown_seconds < ZERO:
+        raise ConfigurationError("app.order_failure_cooldown_seconds cannot be negative")
     leader = AccountConfig(
         id=str(leader_raw.get("id", "leader")),
         exchange=Exchange(str(leader_raw["exchange"]).lower()),

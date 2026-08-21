@@ -12,6 +12,7 @@ app:
   max_concurrent_orders: 5
   max_reconcile_retries: 3
   retry_base_delay_seconds: 0.5
+  order_failure_cooldown_seconds: 300
   position_drift_threshold_percent: 1.0
   position_drift_min_usdt: 5
 

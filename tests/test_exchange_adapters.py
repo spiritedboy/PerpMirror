@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from perpmirror.enums import MarginMode, OrderSide, PositionMode, PositionSide
-from perpmirror.exceptions import AuthenticationError
+from perpmirror.exceptions import AuthenticationError, NonRetryableExchangeError
 from perpmirror.exchanges.binance import BinanceFuturesClient
 from perpmirror.exchanges.okx import OkxSwapClient
 from perpmirror.models import OrderRequest
@@ -97,6 +97,34 @@ async def test_okx_http_401_preserves_authentication_reason(monkeypatch, code, m
     monkeypatch.setattr(client.http, "request", request)
     with pytest.raises(AuthenticationError, match=rf"{code}.*{message}"):
         await client.get_position_mode()
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_top_level_failure_includes_item_error(monkeypatch) -> None:
+    client = OkxSwapClient("key", "secret", "pass")
+
+    async def request(method, path, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "code": "1",
+                "msg": "All operations failed",
+                "data": [
+                    {
+                        "sCode": "51008",
+                        "sMsg": "Order failed. Insufficient available balance",
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(client.http, "request", request)
+    with pytest.raises(
+        NonRetryableExchangeError,
+        match=r"All operations failed.*51008.*Insufficient available balance",
+    ):
+        await client._request("POST", "/api/v5/trade/order", body={"sz": "1"})
     await client.close()
 
 

@@ -34,11 +34,17 @@ class FeishuNotifier(Notifier):
             raise RetryableExchangeError("Feishu webhook network failure") from exc
         if response.status_code == 429 or response.status_code >= 500:
             raise RetryableExchangeError(f"Feishu retryable HTTP status: {response.status_code}")
-        response.raise_for_status()
-        data = response.json()
+        if response.status_code >= 400:
+            detail = " ".join(response.text.split())[:180]
+            raise RuntimeError(f"Feishu HTTP {response.status_code}: {detail or 'request rejected'}")
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Feishu returned a non-JSON response") from exc
         code = data.get("code", data.get("StatusCode", 0))
         if int(code or 0) != 0:
-            raise RuntimeError(f"Feishu rejected card with code {code}")
+            message = data.get("msg", data.get("StatusMessage", "request rejected"))
+            raise RuntimeError(f"Feishu rejected card ({code}): {message}")
 
     async def close(self) -> None:
         await self._client.aclose()

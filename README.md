@@ -129,6 +129,7 @@ leader:
 - `full_reconcile_interval_seconds`: 周期全量对账间隔。
 - `heartbeat_interval_seconds`: 运行心跳日志间隔，设为 `0` 可关闭。
 - `position_drift_threshold_percent` / `position_drift_min_usdt`: 防止价格微变导致频繁调仓。
+- `order_failure_cooldown_seconds`: 同一目标下单失败后的冷却时间，默认 300 秒；目标变化和减仓/平仓不受冷却影响。
 - `fixed_margin_usdt`: FIXED 模式的固定保证金。
 - `copy_ratio`: RATIO 倍率，`0.5/1/1.5` 分别表示 `50%/100%/150%`。
 - `copy_leverage`, `fixed_leverage`, `max_leverage`: 杠杆选择和上限。
@@ -195,7 +196,7 @@ python scripts/check_okx_api.py          # Production Key
 
 ## 飞书通知
 
-使用简洁的 Interactive Message Card：标题显示开仓、加仓、减仓、平仓、反手、失败或风控动作，正文只保留账户、方向、前后仓位、目标、本次订单、杠杆和时间；权益、敞口比例、订单号等详细信息留在日志中。DRY_RUN 卡片有明显黄色模拟标记。通知经过有界 `asyncio.Queue`，最多重试三次并指数退避，永久失败会丢弃并记录错误，绝不会阻塞交易或 WS。
+使用简洁的 Interactive Message Card：标题显示开仓、加仓、减仓、平仓、反手、失败或风控动作，正文只保留账户、方向、前后仓位、目标、本次订单、杠杆和时间；权益、敞口比例、订单号等详细信息留在日志中。DRY_RUN 卡片有明显黄色模拟标记。通知经过有界 `asyncio.Queue`，临时网络/服务端错误最多重试三次并指数退避；Webhook 已失效、群不存在等永久错误会在当前进程内熔断，绝不会阻塞交易或 WS。
 
 配置群机器人 Webhook 和可选签名 Secret 后：
 

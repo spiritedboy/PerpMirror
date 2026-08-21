@@ -59,3 +59,14 @@ def test_preserve_existing_requires_state_file(tmp_path: Path) -> None:
     config.write_text(source)
     with pytest.raises(ConfigurationError, match="ownership_state_file"):
         load_config(config, tmp_path / ".env")
+
+
+def test_order_failure_cooldown_cannot_be_negative(tmp_path: Path) -> None:
+    source = Path("config.example.yaml").read_text().replace(
+        "order_failure_cooldown_seconds: 300",
+        "order_failure_cooldown_seconds: -1",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(source)
+    with pytest.raises(ConfigurationError, match="order_failure_cooldown_seconds"):
+        load_config(config, tmp_path / ".env")

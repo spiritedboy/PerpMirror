@@ -55,6 +55,62 @@ async def test_insufficient_balance_is_order_failed_without_loop(instrument) -> 
 
 
 @pytest.mark.asyncio
+async def test_repeated_order_failure_enters_notification_cooldown(instrument) -> None:
+    client = FakeExchangeClient(instruments=[instrument])
+    client.reject_orders = True
+    reconciler = make_reconciler()
+    first = await reconciler.reconcile(client, target("200", PositionSide.LONG))
+    second = await reconciler.reconcile(client, target("200", PositionSide.LONG))
+
+    assert first.action == ReconcileAction.ORDER_FAILED
+    assert first.notification_suppressed is False
+    assert second.action == ReconcileAction.ORDER_FAILED
+    assert second.notification_suppressed is True
+    assert len(client.orders) == 1
+
+
+@pytest.mark.asyncio
+async def test_failure_cooldown_does_not_block_changed_target(instrument) -> None:
+    client = FakeExchangeClient(instruments=[instrument])
+    client.reject_orders = True
+    reconciler = make_reconciler()
+    await reconciler.reconcile(client, target("200", PositionSide.LONG))
+    await reconciler.reconcile(client, target("300", PositionSide.LONG))
+
+    assert len(client.orders) == 2
+
+
+@pytest.mark.asyncio
+async def test_failure_cooldown_ignores_small_ratio_target_drift(instrument) -> None:
+    client = FakeExchangeClient(instruments=[instrument])
+    client.reject_orders = True
+    reconciler = make_reconciler()
+    await reconciler.reconcile(client, target("200", PositionSide.LONG))
+    second = await reconciler.reconcile(client, target("203", PositionSide.LONG))
+
+    assert second.notification_suppressed is True
+    assert len(client.orders) == 1
+
+
+@pytest.mark.asyncio
+async def test_failure_cooldown_never_blocks_position_close(instrument) -> None:
+    client = FakeExchangeClient(instruments=[instrument])
+    client.reject_orders = True
+    reconciler = make_reconciler()
+    await reconciler.reconcile(client, target("200", PositionSide.LONG))
+
+    client.reject_orders = False
+    client._positions["BTC-USDT-PERP"] = make_position("100")
+    flat = TargetCalculator().calculate(
+        make_follower(), None, Decimal("10000"), Decimal("1000"), "BTC-USDT-PERP"
+    )
+    result = await reconciler.reconcile(client, flat)
+
+    assert result.action == ReconcileAction.CLOSE
+    assert await client.get_position("BTC-USDT-PERP") is None
+
+
+@pytest.mark.asyncio
 async def test_allow_short_false_blocks_short_open(instrument) -> None:
     risk = RiskConfig(
         allow_short=False,

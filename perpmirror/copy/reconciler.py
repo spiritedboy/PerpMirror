@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
 
 from perpmirror.enums import PositionSide, ReconcileAction
@@ -22,6 +24,16 @@ from perpmirror.risk.manager import RiskManager
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class FailureCooldown:
+    deadline: float
+    target_side: PositionSide
+    target_notional: Decimal
+    request_action: ReconcileAction
+    result_action: ReconcileAction
+    message: str
+
+
 class Reconciler:
     def __init__(
         self,
@@ -33,6 +45,7 @@ class Reconciler:
         max_retries: int,
         retry_base_delay: Decimal,
         max_concurrent_orders: int,
+        failure_cooldown: Decimal = Decimal("300"),
     ) -> None:
         self.risk_manager = risk_manager
         self.executor = executor
@@ -40,8 +53,10 @@ class Reconciler:
         self.drift_min_usdt = drift_min_usdt
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
+        self.failure_cooldown = float(failure_cooldown)
         self._locks: defaultdict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
         self._semaphore = asyncio.Semaphore(max_concurrent_orders)
+        self._failure_cooldowns: dict[tuple[str, str], FailureCooldown] = {}
 
     def classify(self, target: FollowerTarget, actual: PositionSnapshot | None) -> ReconcileAction:
         if target.side == PositionSide.FLAT or target.target_notional <= ZERO:
@@ -65,6 +80,27 @@ class Reconciler:
             for attempt in range(self.max_retries + 1):
                 actual = await client.get_position(target.symbol)
                 action = self.classify(target, actual)
+                cooldown = self._failure_cooldowns.get(key)
+                if action in {ReconcileAction.OPEN, ReconcileAction.ADD} and cooldown is not None:
+                    if self._same_failure_target(cooldown, target, action) and (
+                        cooldown.deadline > time.monotonic()
+                    ):
+                        final = actual.abs_notional if actual else ZERO
+                        return ReconcileResult(
+                            target.follower_id,
+                            target.symbol,
+                            cooldown.result_action,
+                            target.target_notional,
+                            previous,
+                            final,
+                            order_results=tuple(orders),
+                            success=False,
+                            message=cooldown.message,
+                            notification_suppressed=True,
+                        )
+                    self._failure_cooldowns.pop(key, None)
+                elif action not in {ReconcileAction.OPEN, ReconcileAction.ADD}:
+                    self._failure_cooldowns.pop(key, None)
                 if action == ReconcileAction.NOOP:
                     final = actual.abs_notional if actual else ZERO
                     return ReconcileResult(
@@ -87,6 +123,14 @@ class Reconciler:
                         exc,
                     )
                     final_position = await client.get_position(target.symbol)
+                    if action in {ReconcileAction.OPEN, ReconcileAction.ADD}:
+                        self._start_cooldown(
+                            key,
+                            target,
+                            action,
+                            ReconcileAction.ORDER_FAILED,
+                            str(exc),
+                        )
                     return ReconcileResult(
                         target.follower_id,
                         target.symbol,
@@ -99,8 +143,20 @@ class Reconciler:
                         str(exc),
                     )
                 if isinstance(outcome, ReconcileResult):
+                    if (
+                        outcome.action == ReconcileAction.RISK_BLOCKED
+                        and action in {ReconcileAction.OPEN, ReconcileAction.ADD}
+                    ):
+                        self._start_cooldown(
+                            key,
+                            target,
+                            action,
+                            ReconcileAction.RISK_BLOCKED,
+                            outcome.message or "risk blocked",
+                        )
                     return outcome
                 orders.extend(outcome)
+                self._failure_cooldowns.pop(key, None)
                 if self.executor.dry_run:
                     return ReconcileResult(
                         target.follower_id,
@@ -128,6 +184,41 @@ class Reconciler:
                 self.classify(target, final_position) == ReconcileAction.NOOP,
                 "maximum reconciliation retries reached",
             )
+
+    def _start_cooldown(
+        self,
+        key: tuple[str, str],
+        target: FollowerTarget,
+        request_action: ReconcileAction,
+        result_action: ReconcileAction,
+        message: str,
+    ) -> None:
+        if self.failure_cooldown <= 0:
+            return
+        self._failure_cooldowns[key] = FailureCooldown(
+            deadline=time.monotonic() + self.failure_cooldown,
+            target_side=target.side,
+            target_notional=target.target_notional,
+            request_action=request_action,
+            result_action=result_action,
+            message=message,
+        )
+
+    def _same_failure_target(
+        self,
+        cooldown: FailureCooldown,
+        target: FollowerTarget,
+        action: ReconcileAction,
+    ) -> bool:
+        tolerance = max(
+            self.drift_min_usdt,
+            cooldown.target_notional * self.drift_percent / Decimal("100"),
+        )
+        return (
+            cooldown.target_side == target.side
+            and cooldown.request_action == action
+            and abs(cooldown.target_notional - target.target_notional) <= tolerance
+        )
 
     async def _execute_action(
         self,

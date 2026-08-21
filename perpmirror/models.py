@@ -178,6 +178,7 @@ class ReconcileResult:
     order_results: tuple[OrderResult, ...] = ()
     success: bool = True
     message: str | None = None
+    notification_suppressed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
