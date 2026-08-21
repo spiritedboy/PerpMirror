@@ -9,7 +9,7 @@ from perpmirror.config import Settings
 from perpmirror.copy.calculator import TargetCalculator
 from perpmirror.copy.reconciler import Reconciler
 from perpmirror.enums import Exchange, ReconcileAction
-from perpmirror.exceptions import ConfigurationError
+from perpmirror.exceptions import ConfigurationError, PerpMirrorError
 from perpmirror.exchanges import BinanceFuturesClient, ExchangeClient, OkxSwapClient
 from perpmirror.execution.executor import ExecutionEngine
 from perpmirror.models import ZERO, FollowerTarget, ReconcileResult, TradeNotification
@@ -83,20 +83,38 @@ class PerpMirrorApp:
         raise ConfigurationError(f"unsupported configured exchange: {exchange.value}")
 
     async def startup_checks(self) -> None:
-        clients = [self.leader, *self.followers.values()]
-        for client in clients:
-            offset = await client.sync_time()
-            instruments = await client.get_instruments()
-            if not instruments:
-                raise ConfigurationError(f"{client.exchange.value}: no active USDT perpetual instruments")
-            self.mapper.add_instruments(client.exchange, instruments)
-            mode = await client.get_position_mode()
-            equity = await client.get_equity()
-            await client.get_positions()
-            if equity < ZERO:
-                raise ConfigurationError(f"{client.exchange.value}: account equity is negative")
+        accounts = [
+            ("leader", self.settings.leader.id, self.leader),
+            *(("follower", follower.id, self.followers[follower.id]) for follower in self.settings.followers),
+        ]
+        for role, account_id, client in accounts:
             logger.info(
-                "STARTUP_CHECK exchange=%s clock_offset_ms=%s instruments=%s position_mode=%s equity=%s",
+                "STARTUP_CHECK_BEGIN role=%s account_id=%s exchange=%s",
+                role,
+                account_id,
+                client.exchange.value,
+            )
+            try:
+                offset = await client.sync_time()
+                instruments = await client.get_instruments()
+                if not instruments:
+                    raise ConfigurationError(f"{client.exchange.value}: no active USDT perpetual instruments")
+                self.mapper.add_instruments(client.exchange, instruments)
+                mode = await client.get_position_mode()
+                equity = await client.get_equity()
+                await client.get_positions()
+                if equity < ZERO:
+                    raise ConfigurationError(f"{client.exchange.value}: account equity is negative")
+            except PerpMirrorError as exc:
+                raise ConfigurationError(
+                    f"startup check failed role={role} account_id={account_id} "
+                    f"exchange={client.exchange.value}: {exc}"
+                ) from exc
+            logger.info(
+                "STARTUP_CHECK_OK role=%s account_id=%s exchange=%s clock_offset_ms=%s "
+                "instruments=%s position_mode=%s equity=%s",
+                role,
+                account_id,
                 client.exchange.value,
                 offset,
                 len(instruments),
